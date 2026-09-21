@@ -11,7 +11,7 @@ const payBadge = (status) => {
 };
 
 export default function Invoices() {
-  const { invoices, updateInvoice } = useApp();
+  const { invoices } = useApp();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filterPayment, setFilterPayment] = useState('All');
@@ -43,9 +43,7 @@ export default function Invoices() {
     return <span>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   };
 
-  const quickStatusChange = (id, field, val) => {
-    updateInvoice(id, { [field]: val });
-  };
+
 
   return (
     <div className="page">
@@ -150,18 +148,7 @@ export default function Invoices() {
                     ₹{(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}
                   </td>
 
-                  <td>
-                    <select
-                      className="status-select"
-                      value={inv.paymentStatus}
-                      onChange={e => quickStatusChange(inv.id, 'paymentStatus', e.target.value)}
-                      style={{ color: inv.paymentStatus === 'Paid' ? 'var(--success)' : inv.paymentStatus === 'Partial' ? 'var(--warning)' : 'var(--danger)' }}
-                    >
-                      <option value="Unpaid">Unpaid</option>
-                      <option value="Partial">Partial</option>
-                      <option value="Paid">Paid</option>
-                    </select>
-                  </td>
+                  <td>{payBadge(inv.paymentStatus)}</td>
                   <td>
                     <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/invoices/${inv.id}`)}>
                       View

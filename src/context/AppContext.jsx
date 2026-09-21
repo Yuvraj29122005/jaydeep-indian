@@ -115,6 +115,12 @@ export function AppProvider({ children }) {
     }
   };
 
+  const defaultBottleBalance = () => ({
+    '5kg': { filledGiven: 0, emptyCollected: 0 },
+    '19kg': { filledGiven: 0, emptyCollected: 0 },
+    '47.5kg': { filledGiven: 0, emptyCollected: 0 },
+  });
+
   const updateBottleBalance = async (customerId, cylinderType, filledGivenDelta, emptyCollectedDelta) => {
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return;
@@ -141,12 +147,26 @@ export function AppProvider({ children }) {
 
   const setBottleBalanceDirect = async (customerId, newBalance) => {
     try {
-      await db.patchCustomer(customerId, { bottleBalance: newBalance });
+      const updatedCustomer = await db.patchCustomer(customerId, { bottleBalance: newBalance });
       setCustomers(prev => prev.map(c =>
-        c.id === customerId ? { ...c, bottleBalance: newBalance } : c
+        c.id === customerId ? updatedCustomer : c
       ));
     } catch (err) {
       console.error('Failed to set bottle balance:', err);
+    }
+  };
+
+  // ==================== EMPTY BOTTLE STOCK (Separate from invoice tracking) ====================
+
+  const updateEmptyBottleStock = async (customerId, newStock) => {
+    try {
+      const updatedCustomer = await db.patchCustomer(customerId, { emptyBottleStock: newStock });
+      setCustomers(prev => prev.map(c =>
+        c.id === customerId ? updatedCustomer : c
+      ));
+    } catch (err) {
+      console.error('Failed to update empty bottle stock:', err);
+      throw err;
     }
   };
 
@@ -328,7 +348,7 @@ export function AppProvider({ children }) {
       customers, addCustomer, updateCustomer, deleteCustomer,
       stock, updateStock, addStockManual, getStockByType,
       invoices, createInvoice, updateInvoice, editInvoiceFull,
-      updateBottleBalance, setBottleBalanceDirect,
+      updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,
       expenses, addExpense, updateExpense, deleteExpense,
       refillTrips, sendForRefill, returnFromRefill,
     }}>

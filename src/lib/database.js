@@ -23,13 +23,39 @@ export async function insertCustomer(customer) {
 }
 
 export async function patchCustomer(id, updates) {
+  const { data: current, error: fetchErr } = await supabase.from('customers').select('*').eq('id', id).single();
+  if (fetchErr) throw fetchErr;
+
   const dbUpdates = {};
   if (updates.name !== undefined) dbUpdates.name = updates.name;
   if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
   if (updates.address !== undefined) dbUpdates.address = updates.address;
   if (updates.type !== undefined) dbUpdates.type = updates.type;
   if (updates.prices !== undefined) dbUpdates.prices = updates.prices;
-  if (updates.bottleBalance !== undefined) dbUpdates.bottle_balance = updates.bottleBalance;
+  
+  if (updates.bottleBalance !== undefined || updates.emptyBottleStock !== undefined) {
+    const currentBal = current.bottle_balance || {};
+    const newBal = updates.bottleBalance;
+    const newStock = updates.emptyBottleStock;
+    
+    dbUpdates.bottle_balance = {
+      '5kg': {
+        filledGiven: newBal ? (newBal['5kg']?.filledGiven || 0) : (currentBal['5kg']?.filledGiven || 0),
+        emptyCollected: newBal ? (newBal['5kg']?.emptyCollected || 0) : (currentBal['5kg']?.emptyCollected || 0),
+        stock: newStock ? (newStock['5kg'] || {withCustomer:0, collected:0}) : (currentBal['5kg']?.stock || {withCustomer:0, collected:0})
+      },
+      '19kg': {
+        filledGiven: newBal ? (newBal['19kg']?.filledGiven || 0) : (currentBal['19kg']?.filledGiven || 0),
+        emptyCollected: newBal ? (newBal['19kg']?.emptyCollected || 0) : (currentBal['19kg']?.emptyCollected || 0),
+        stock: newStock ? (newStock['19kg'] || {withCustomer:0, collected:0}) : (currentBal['19kg']?.stock || {withCustomer:0, collected:0})
+      },
+      '47.5kg': {
+        filledGiven: newBal ? (newBal['47.5kg']?.filledGiven || 0) : (currentBal['47.5kg']?.filledGiven || 0),
+        emptyCollected: newBal ? (newBal['47.5kg']?.emptyCollected || 0) : (currentBal['47.5kg']?.emptyCollected || 0),
+        stock: newStock ? (newStock['47.5kg'] || {withCustomer:0, collected:0}) : (currentBal['47.5kg']?.stock || {withCustomer:0, collected:0})
+      }
+    };
+  }
 
   const { data, error } = await supabase
     .from('customers')
@@ -50,33 +76,41 @@ export async function removeCustomer(id) {
 }
 
 function mapCustomerFromDB(row) {
+  const bal = row.bottle_balance || {};
   return {
     id: row.id,
-    name: row.name,
-    phone: row.phone,
-    address: row.address,
-    type: row.type,
+    name: row.name || '',
+    phone: row.phone || '',
+    address: row.address || '',
+    type: row.type || 'Domestic',
     prices: row.prices || { '5kg': 450, '19kg': 950, '47.5kg': 2200 },
-    bottleBalance: row.bottle_balance || {
-      '5kg': { filledGiven: 0, emptyCollected: 0 },
-      '19kg': { filledGiven: 0, emptyCollected: 0 },
-      '47.5kg': { filledGiven: 0, emptyCollected: 0 },
+    bottleBalance: {
+      '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0 },
+      '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0 },
+      '47.5kg': { filledGiven: bal['47.5kg']?.filledGiven || 0, emptyCollected: bal['47.5kg']?.emptyCollected || 0 },
+    },
+    emptyBottleStock: {
+      '5kg': bal['5kg']?.stock || { withCustomer: 0, collected: 0 },
+      '19kg': bal['19kg']?.stock || { withCustomer: 0, collected: 0 },
+      '47.5kg': bal['47.5kg']?.stock || { withCustomer: 0, collected: 0 },
     },
   };
 }
 
 function mapCustomerToDB(customer) {
+  const bal = customer.bottleBalance || {};
+  const stock = customer.emptyBottleStock || {};
   return {
     name: customer.name,
     phone: customer.phone,
     address: customer.address || '',
     type: customer.type || 'Domestic',
     prices: customer.prices || { '5kg': 450, '19kg': 950, '47.5kg': 2200 },
-    bottle_balance: customer.bottleBalance || {
-      '5kg': { filledGiven: 0, emptyCollected: 0 },
-      '19kg': { filledGiven: 0, emptyCollected: 0 },
-      '47.5kg': { filledGiven: 0, emptyCollected: 0 },
-    },
+    bottle_balance: {
+      '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0, stock: stock['5kg'] || { withCustomer: 0, collected: 0 } },
+      '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0, stock: stock['19kg'] || { withCustomer: 0, collected: 0 } },
+      '47.5kg': { filledGiven: bal['47.5kg']?.filledGiven || 0, emptyCollected: bal['47.5kg']?.emptyCollected || 0, stock: stock['47.5kg'] || { withCustomer: 0, collected: 0 } },
+    }
   };
 }
 

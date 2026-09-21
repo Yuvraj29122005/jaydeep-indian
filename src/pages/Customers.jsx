@@ -20,20 +20,34 @@ const defaultBalance = () => ({
 
 export default function Customers() {
   const navigate = useNavigate();
-  const { customers, addCustomer, updateCustomer, deleteCustomer, setBottleBalanceDirect, loading } = useApp();
+  const { customers, addCustomer, updateCustomer, deleteCustomer, updateEmptyBottleStock, loading } = useApp();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('All');
   const [modal, setModal] = useState(null); // null | 'add' | 'edit'
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  // Bottle balance modal
-  const [balanceModal, setBalanceModal] = useState(null); // customer object
-  const [balanceForm, setBalanceForm] = useState(defaultBalance());
+  // Bottle balance modal — stores customer ID, not the object
+  const [balanceModalId, setBalanceModalId] = useState(null);
+  const balanceModalCustomer = balanceModalId ? customers.find(c => c.id === balanceModalId) : null;
+  
+  const defaultEmptyStock = () => ({
+    '5kg': { withCustomer: 0, collected: 0 },
+    '19kg': { withCustomer: 0, collected: 0 },
+    '47.5kg': { withCustomer: 0, collected: 0 },
+  });
+  
+  // Collect empty bottles form
+  const [collectForm, setCollectForm] = useState(defaultEmptyStock());
+  const [collectSuccess, setCollectSuccess] = useState(false);
 
   const filtered = customers.filter(c => {
-    const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search) || c.address.toLowerCase().includes(search.toLowerCase());
+    const searchLower = (search || '').toLowerCase();
+    const nameMatch = (c.name || '').toLowerCase().includes(searchLower);
+    const phoneMatch = (c.phone || '').includes(searchLower);
+    const addressMatch = (c.address || '').toLowerCase().includes(searchLower);
+    
+    const matchSearch = nameMatch || phoneMatch || addressMatch;
     const matchType = filterType === 'All' || c.type === filterType;
     return matchSearch && matchType;
   });
@@ -55,9 +69,9 @@ export default function Customers() {
   };
 
   const openBalanceModal = (c) => {
-    const bal = c.bottleBalance || defaultBalance();
-    setBalanceForm(JSON.parse(JSON.stringify(bal)));
-    setBalanceModal(c);
+    setCollectForm(defaultEmptyStock());
+    setCollectSuccess(false);
+    setBalanceModalId(c.id);
   };
 
   const submitForm = () => {
@@ -79,30 +93,76 @@ export default function Customers() {
     setForm(f => ({ ...f, prices: { ...f.prices, [type]: Number(val) } }));
   };
 
-  const updateBalanceField = (cylType, field, val) => {
-    setBalanceForm(prev => ({
+
+
+  const updateCollectField = (cylType, field, val) => {
+    setCollectForm(prev => ({
       ...prev,
       [cylType]: {
         ...prev[cylType],
-        [field]: Math.max(0, Number(val) || 0),
+        [field]: Math.max(0, Number(val) || 0)
       }
     }));
   };
 
-  const saveBalance = () => {
-    setBottleBalanceDirect(balanceModal.id, balanceForm);
-    setBalanceModal(null);
+  const collectEmptyBottles = async () => {
+    if (!balanceModalCustomer) return;
+    
+    // Merge collectForm into the existing emptyBottleStock
+    const stock = balanceModalCustomer.emptyBottleStock || defaultEmptyStock();
+    const updated = JSON.parse(JSON.stringify(stock));
+    
+    let hasChanges = false;
+    CYLINDER_TYPES.forEach(t => {
+      if (collectForm[t].withCustomer > 0 || collectForm[t].collected > 0) {
+        hasChanges = true;
+        const cur = updated[t] || { withCustomer: 0, collected: 0 };
+        updated[t] = {
+          withCustomer: cur.withCustomer + collectForm[t].withCustomer,
+          collected: cur.collected + collectForm[t].collected
+        };
+      }
+    });
+    
+    if (!hasChanges) return alert('Please enter at least one bottle count.');
+    
+    try {
+      await updateEmptyBottleStock(balanceModalCustomer.id, updated);
+      setCollectSuccess(true);
+      setCollectForm(defaultEmptyStock());
+      setTimeout(() => setCollectSuccess(false), 3000);
+    } catch (err) {
+      alert('Failed to save: ' + (err.message || err));
+    }
   };
 
-  const getBalance = (c) => {
-    const bal = c.bottleBalance || defaultBalance();
-    let totalFilled = 0, totalEmpty = 0;
+  const getEmptyStock = (c) => {
+    const stock = c.emptyBottleStock || defaultEmptyStock();
+    let totalWithCustomer = 0, totalCollected = 0;
+    const perType = {};
+    CYLINDER_TYPES.forEach(t => {
+      const s = stock[t] || { withCustomer: 0, collected: 0 };
+      const withC = Number(s.withCustomer) || 0;
+      const coll = Number(s.collected) || 0;
+      const net = Math.max(0, withC - coll);
+      perType[t] = net;
+      totalWithCustomer += withC;
+      totalCollected += coll;
+    });
+    return { totalWithCustomer, totalCollected, net: totalWithCustomer - totalCollected, perType };
+  };
+
+  const getInvoiceBalance = (c) => {
+    const bal = c.bottleBalance || defaultBalance(); // Uses correct invoice balance structure
+    let totalFilled = 0;
+    const perType = {};
     CYLINDER_TYPES.forEach(t => {
       const b = bal[t] || { filledGiven: 0, emptyCollected: 0 };
-      totalFilled += b.filledGiven;
-      totalEmpty += b.emptyCollected;
+      const filled = Number(b.filledGiven) || 0;
+      perType[t] = filled;
+      totalFilled += filled;
     });
-    return { totalFilled, totalEmpty, net: totalFilled - totalEmpty };
+    return { totalFilled, perType };
   };
 
   const typeBadge = (type) => {
@@ -152,36 +212,77 @@ export default function Customers() {
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Type</th>
-                <th>5kg Price</th>
-                <th>19kg Price</th>
-                <th>47.5kg Price</th>
-                <th>🫙 Bottles With Customer</th>
+                <th>🟢 Filled Bottles Sold</th>
+                <th>🫙 Empty Bottles to Collect</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
+                <tr><td colSpan={6} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
               ) : filtered.map(c => {
-                const bal = getBalance(c);
+                const stock = getEmptyStock(c);
+                const invBal = getInvoiceBalance(c);
+                
+                const hasBottlesToCollect = stock.net > 0;
+                const breakdownTextStock = CYLINDER_TYPES
+                  .filter(t => stock.perType[t] > 0)
+                  .map(t => `${t}: ${stock.perType[t]}`)
+                  .join(', ');
+                  
+                const hasFilledSold = invBal.totalFilled > 0;
+                const breakdownTextFilled = CYLINDER_TYPES
+                  .filter(t => invBal.perType[t] > 0)
+                  .map(t => `${t}: ${invBal.perType[t]}`)
+                  .join(', ');
+                  
                 return (
                   <tr key={c.id}>
                     <td className="text-muted" style={{ fontSize: '0.78rem' }}>{c.id}</td>
                     <td className="fw-600">{c.name}</td>
                     <td>{c.phone}</td>
                     <td>{typeBadge(c.type)}</td>
-                    <td className="text-accent">₹{c.prices['5kg']}</td>
-                    <td className="text-accent">₹{c.prices['19kg']}</td>
-                    <td className="text-accent">₹{c.prices['47.5kg']}</td>
                     <td>
-                      <span
-                        className={`badge ${bal.net > 0 ? 'badge-warning' : 'badge-success'}`}
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => openBalanceModal(c)}
-                        title="Click to manage bottle balance"
-                      >
-                        🫙 {bal.net} bottles
-                      </span>
+                      {hasFilledSold ? (
+                        <div>
+                          <span className="badge badge-success" style={{ fontSize: '0.85rem', fontWeight: 700, padding: '5px 12px' }}>
+                            🟢 {invBal.totalFilled} bottles
+                          </span>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--success)', marginTop: 4, fontWeight: 600 }}>
+                            {breakdownTextFilled}
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>
+                      )}
+                    </td>
+                    <td>
+                      {hasBottlesToCollect ? (
+                        <div
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => openBalanceModal(c)}
+                          title={`Click to manage — ${breakdownTextStock}`}
+                        >
+                          <span
+                            className="badge badge-danger"
+                            style={{ fontSize: '0.85rem', fontWeight: 700, padding: '5px 12px' }}
+                          >
+                            🫙 {stock.net} bottles
+                          </span>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: 4, fontWeight: 600 }}>
+                            {breakdownTextStock}
+                          </div>
+                        </div>
+                      ) : (
+                        <span
+                          className="badge badge-success"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => openBalanceModal(c)}
+                          title="Click to manage bottle balance"
+                        >
+                          ✅ All collected
+                        </span>
+                      )}
                     </td>
                     <td>
                       <div className="btn-group">
@@ -253,75 +354,125 @@ export default function Customers() {
       )}
 
       {/* Bottle Balance Management Modal */}
-      {balanceModal && (
-        <div className="modal-overlay" onClick={() => setBalanceModal(null)}>
-          <div className="modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+      {balanceModalCustomer && (() => {
+        const cust = balanceModalCustomer;
+        const stock = cust.emptyBottleStock || defaultEmptyStock();
+        const grandTotal = CYLINDER_TYPES.reduce((sum, t) => {
+          const s = stock[t] || { withCustomer: 0, collected: 0 };
+          return sum + Math.max(0, s.withCustomer - s.collected);
+        }, 0);
+        return (
+        <div className="modal-overlay" onClick={() => setBalanceModalId(null)}>
+          <div className="modal" style={{ maxWidth: 700 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">🫙 Bottle Balance — {balanceModal.name}</span>
-              <button className="modal-close" onClick={() => setBalanceModal(null)}>×</button>
+              <span className="modal-title">🫙 Empty Bottle Stock — {cust.name}</span>
+              <button className="modal-close" onClick={() => setBalanceModalId(null)}>×</button>
             </div>
             <div className="modal-body">
-              <div style={{ padding: '12px', background: 'rgba(234,88,12,0.06)', borderRadius: 8, border: '1px solid rgba(234,88,12,0.15)', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 20 }}>
-                💡 <strong>How it works:</strong> "Filled Given" = total filled bottles you've given to this customer over time. "Empty Collected" = total empty bottles you've collected back. The <strong>Balance</strong> shows how many of your bottles are still with the customer. This auto-updates when invoices are created, but you can also edit manually.
+              <div style={{ padding: '12px', background: 'rgba(59,130,246,0.08)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 20 }}>
+                💡 <strong>How it works:</strong> This tracks physical empty bottles separate from invoices. <strong>"With Customer"</strong> is how many empty bottles they have. <strong>"Collected"</strong> is how many you picked up.
               </div>
 
-              {CYLINDER_TYPES.map(type => {
-                const b = balanceForm[type] || { filledGiven: 0, emptyCollected: 0 };
-                const net = b.filledGiven - b.emptyCollected;
-                return (
-                  <div key={type} style={{ marginBottom: 20, padding: 16, background: 'var(--bg-primary)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <span style={{ fontWeight: 700, fontSize: '1rem' }}>{CYL_ICONS[type]} {type} Cylinder</span>
-                      <span className={`badge ${net > 0 ? 'badge-warning' : net === 0 ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.8rem', padding: '4px 10px' }}>
-                        Balance: {net} bottles with customer
-                      </span>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label" style={{ color: 'var(--success)' }}>🟢 Total Filled Given</label>
-                        <input
-                          className="form-control"
-                          type="number"
-                          min="0"
-                          value={b.filledGiven}
-                          onChange={e => updateBalanceField(type, 'filledGiven', e.target.value)}
-                        />
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label" style={{ color: 'var(--danger)' }}>🔴 Total Empty Collected</label>
-                        <input
-                          className="form-control"
-                          type="number"
-                          min="0"
-                          value={b.emptyCollected}
-                          onChange={e => updateBalanceField(type, 'emptyCollected', e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {/* Success Message */}
+              {collectSuccess && (
+                <div style={{ padding: 12, background: 'rgba(34,197,94,0.1)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.3)', marginBottom: 16, textAlign: 'center', fontSize: '0.9rem', fontWeight: 700, color: 'var(--success)' }}>
+                  ✅ Empty bottle records updated successfully!
+                </div>
+              )}
 
-              {/* Grand Total */}
-              <div style={{ padding: 14, background: 'rgba(234,88,12,0.06)', borderRadius: 8, border: '1px solid rgba(234,88,12,0.15)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '0.95rem' }}>
-                  <span>📊 Grand Total Bottles With Customer</span>
-                  <span className="text-accent">
-                    {CYLINDER_TYPES.reduce((sum, t) => {
-                      const b = balanceForm[t] || { filledGiven: 0, emptyCollected: 0 };
-                      return sum + (b.filledGiven - b.emptyCollected);
-                    }, 0)} bottles
+              {/* Current Balance — Read Only (LIVE from customers array) */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📊 Current Pending Balance</span>
+                  <span className={`badge ${grandTotal > 0 ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: '0.9rem', fontWeight: 700, padding: '5px 14px' }}>
+                    {grandTotal > 0 ? `${grandTotal} bottles pending` : '✅ All collected'}
                   </span>
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                  {CYLINDER_TYPES.map(type => {
+                    const s = stock[type] || { withCustomer: 0, collected: 0 };
+                    const net = Math.max(0, s.withCustomer - s.collected);
+                    return (
+                      <div key={type} style={{
+                        padding: 12, borderRadius: 8, textAlign: 'center',
+                        background: net > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)',
+                        border: net > 0 ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(34,197,94,0.25)',
+                      }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 4 }}>{CYL_ICONS[type]} {type}</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: 2 }}>With Cust: {s.withCustomer} | Collected: {s.collected}</div>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: net > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                          {net > 0 ? net : '✅ 0'}
+                        </div>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>{net > 0 ? 'to collect' : 'all clear'}</div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+
+              {/* Add to Empty Bottle Stock */}
+              <div style={{ padding: 16, background: 'var(--bg-primary)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                <div style={{ marginBottom: 12 }}>
+                  <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>➕ Add Empty Bottle Records</span>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 6, marginBottom: 0 }}>
+                    Add amounts to the customer's total empty bottles, or record empty bottles you just collected. Saves to database immediately.
+                  </p>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
+                  {CYLINDER_TYPES.map(type => {
+                    const s = stock[type] || { withCustomer: 0, collected: 0 };
+                    const net = Math.max(0, s.withCustomer - s.collected);
+                    return (
+                      <div key={type} style={{ padding: 12, background: 'var(--bg-body)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 12, textAlign: 'center' }}>
+                          {CYL_ICONS[type]} {type} Cylinder
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 8 }}>
+                          <label className="form-label" style={{ fontSize: '0.72rem', color: 'var(--warning)' }}>⚠️ Added to Customer</label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={collectForm[type].withCustomer || ''}
+                            onChange={e => updateCollectField(type, 'withCustomer', e.target.value)}
+                            placeholder="0"
+                            style={{ fontWeight: 600, fontSize: '0.95rem', textAlign: 'center', padding: '6px' }}
+                          />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.72rem', color: 'var(--success)' }}>📥 Empty Collected</label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={collectForm[type].collected || ''}
+                            onChange={e => updateCollectField(type, 'collected', e.target.value)}
+                            placeholder="0"
+                            style={{ fontWeight: 600, fontSize: '0.95rem', textAlign: 'center', padding: '6px' }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%', padding: 12, fontWeight: 700, fontSize: '0.95rem' }}
+                  onClick={collectEmptyBottles}
+                >
+                  💾 Save New Records Now
+                </button>
+              </div>
+
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setBalanceModal(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveBalance}>💾 Save Balance</button>
+              <button className="btn btn-secondary" onClick={() => setBalanceModalId(null)}>Close</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Delete Confirm */}
       {deleteConfirm && (
