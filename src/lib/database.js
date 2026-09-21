@@ -179,15 +179,33 @@ export async function patchInvoice(id, updates) {
   if (updates.customerName !== undefined) dbUpdates.customer_name = updates.customerName;
   if (updates.customerPhone !== undefined) dbUpdates.customer_phone = updates.customerPhone;
   if (updates.customerAddress !== undefined) dbUpdates.customer_address = updates.customerAddress;
-  if (updates.items !== undefined) dbUpdates.items = updates.items;
   if (updates.totalAmount !== undefined) dbUpdates.total_amount = updates.totalAmount;
   if (updates.paidAmount !== undefined) dbUpdates.paid_amount = updates.paidAmount;
   if (updates.paymentMode !== undefined) dbUpdates.payment_mode = updates.paymentMode;
   if (updates.paymentStatus !== undefined) dbUpdates.payment_status = updates.paymentStatus;
   if (updates.deliveryStatus !== undefined) dbUpdates.delivery_status = updates.deliveryStatus;
-  if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
   if (updates.privateNotes !== undefined) dbUpdates.private_notes = updates.privateNotes;
   if (updates.paymentScreenshot !== undefined) dbUpdates.payment_screenshot = updates.paymentScreenshot;
+
+  const isEB = updates.invoiceType === 'Empty Bottle' || updates.items?.some(i => i.itemType === 'empty' || i.isBottleOnly);
+  
+  if (updates.notes !== undefined || updates.invoiceType !== undefined) {
+    let finalNotes = updates.notes !== undefined ? updates.notes : '';
+    if (isEB && !finalNotes.includes('[Type: Empty Bottle]')) {
+      finalNotes = `[Type: Empty Bottle] ${finalNotes}`.trim();
+    } else if (!isEB && finalNotes.includes('[Type: Empty Bottle]')) {
+      finalNotes = finalNotes.replace(/\[Type:\s*Empty Bottle\]\s*/gi, '').trim();
+    }
+    dbUpdates.notes = finalNotes;
+  }
+
+  if (updates.items !== undefined) {
+    dbUpdates.items = updates.items.map(item => ({
+      ...item,
+      itemType: isEB ? 'empty' : (item.itemType || 'filled'),
+      isBottleOnly: isEB || Boolean(item.isBottleOnly),
+    }));
+  }
 
   const { data, error } = await supabase
     .from('invoices')
@@ -199,42 +217,72 @@ export async function patchInvoice(id, updates) {
   return mapInvoiceFromDB(data);
 }
 
+export async function removeInvoice(id) {
+  const { error } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
+}
+
 function mapInvoiceFromDB(row) {
+  const rawNotes = row.notes || '';
+  const isEB = rawNotes.includes('[Type: Empty Bottle]') ||
+               Boolean(row.items && row.items.some(i => i.itemType === 'empty' || i.isBottleOnly)) ||
+               row.invoice_type === 'Empty Bottle';
+
+  const cleanNotes = rawNotes.replace(/\[Type:\s*Empty Bottle\]\s*/gi, '').trim();
+
   return {
     id: row.id,
     invoiceNumber: row.invoice_number,
+    invoiceType: isEB ? 'Empty Bottle' : 'Standard',
     date: row.date,
     customerId: row.customer_id,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
-    customerAddress: row.customer_address,
+    customerAddress: row.customer_address || '',
     items: row.items || [],
     totalAmount: row.total_amount,
     paidAmount: row.paid_amount,
     paymentMode: row.payment_mode,
     paymentStatus: row.payment_status,
-    deliveryStatus: row.delivery_status || 'Pending',
-    notes: row.notes || '',
+    deliveryStatus: row.delivery_status || (isEB ? 'Collected' : 'Pending'),
+    notes: cleanNotes,
     privateNotes: row.private_notes || '',
     paymentScreenshot: row.payment_screenshot || '',
   };
 }
 
 function mapInvoiceToDB(invoice) {
+  const isEB = invoice.invoiceType === 'Empty Bottle' || invoice.items?.some(i => i.itemType === 'empty' || i.isBottleOnly);
+  let finalNotes = invoice.notes || '';
+  if (isEB && !finalNotes.includes('[Type: Empty Bottle]')) {
+    finalNotes = `[Type: Empty Bottle] ${finalNotes}`.trim();
+  } else if (!isEB && finalNotes.includes('[Type: Empty Bottle]')) {
+    finalNotes = finalNotes.replace(/\[Type:\s*Empty Bottle\]\s*/gi, '').trim();
+  }
+
+  const preparedItems = (invoice.items || []).map(item => ({
+    ...item,
+    itemType: isEB ? 'empty' : (item.itemType || 'filled'),
+    isBottleOnly: isEB || Boolean(item.isBottleOnly),
+  }));
+
   return {
     invoice_number: invoice.invoiceNumber,
     date: invoice.date,
     customer_id: invoice.customerId,
     customer_name: invoice.customerName,
     customer_phone: invoice.customerPhone,
-    customer_address: invoice.customerAddress,
-    items: invoice.items,
-    total_amount: invoice.totalAmount,
-    paid_amount: invoice.paidAmount,
-    payment_mode: invoice.paymentMode,
+    customer_address: invoice.customerAddress || '',
+    items: preparedItems,
+    total_amount: Number(invoice.totalAmount) || 0,
+    paid_amount: Number(invoice.paidAmount) || 0,
+    payment_mode: invoice.paymentMode || 'Cash',
     payment_status: invoice.paymentStatus || 'Unpaid',
-    delivery_status: invoice.deliveryStatus || 'Pending',
-    notes: invoice.notes || '',
+    delivery_status: invoice.deliveryStatus || (isEB ? 'Collected' : 'Pending'),
+    notes: finalNotes,
     private_notes: invoice.privateNotes || '',
     payment_screenshot: invoice.paymentScreenshot || '',
   };

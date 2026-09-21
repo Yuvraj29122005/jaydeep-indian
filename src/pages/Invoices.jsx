@@ -15,16 +15,20 @@ export default function Invoices() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filterPayment, setFilterPayment] = useState('All');
+  const [filterType, setFilterType] = useState('All');
   const [filterDate, setFilterDate] = useState('');
   const [sortField, setSortField] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
 
   const filtered = invoices.filter(inv => {
-    const matchSearch = inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
-      inv.customerName.toLowerCase().includes(search.toLowerCase());
+    const s = search.toLowerCase();
+    const matchSearch = (inv.invoiceNumber || '').toLowerCase().includes(s) ||
+      (inv.customerName || '').toLowerCase().includes(s);
     const matchPayment = filterPayment === 'All' || inv.paymentStatus === filterPayment;
+    const invType = inv.invoiceType || 'Standard';
+    const matchType = filterType === 'All' || invType === filterType;
     const matchDate = !filterDate || inv.date === filterDate;
-    return matchSearch && matchPayment && matchDate;
+    return matchSearch && matchPayment && matchType && matchDate;
   }).sort((a, b) => {
     let valA = a[sortField], valB = b[sortField];
     if (sortField === 'totalAmount') { valA = Number(valA); valB = Number(valB); }
@@ -43,7 +47,8 @@ export default function Invoices() {
     return <span>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   };
 
-
+  const emptyBottleInvoicesCount = invoices.filter(i => i.invoiceType === 'Empty Bottle').length;
+  const standardInvoicesCount = invoices.length - emptyBottleInvoicesCount;
 
   return (
     <div className="page">
@@ -55,7 +60,8 @@ export default function Invoices() {
         <div className="btn-group">
           <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(invoices)}>📥 Excel</button>
           <button className="btn btn-secondary" onClick={() => exportAllInvoicesPDF(invoices)}>📄 PDF</button>
-          <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>➕ New Invoice</button>
+          <button className="btn btn-info" onClick={() => navigate('/invoices/new?type=empty')}>🫙 Empty Bottle Invoice</button>
+          <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>➕ Refill Invoice</button>
         </div>
       </div>
 
@@ -78,13 +84,19 @@ export default function Invoices() {
           onChange={e => setFilterDate(e.target.value)}
         />
 
+        <select className="form-control" style={{ width: 150 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <option value="All">All Invoice Types</option>
+          <option value="Standard">🟢 Standard Refill</option>
+          <option value="Empty Bottle">🫙 Empty Bottle</option>
+        </select>
+
         <select className="form-control" style={{ width: 140 }} value={filterPayment} onChange={e => setFilterPayment(e.target.value)}>
           <option value="All">All Payments</option>
           <option value="Unpaid">Unpaid</option>
           <option value="Partial">Partial</option>
           <option value="Paid">Paid</option>
         </select>
-        <button className="btn btn-secondary btn-sm" onClick={() => { setSearch(''); setFilterPayment('All'); setFilterDate(''); }}>
+        <button className="btn btn-secondary btn-sm" onClick={() => { setSearch(''); setFilterType('All'); setFilterPayment('All'); setFilterDate(''); }}>
           ✖ Clear
         </button>
       </div>
@@ -93,6 +105,8 @@ export default function Invoices() {
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         {[
           { label: 'Total', count: invoices.length, color: 'var(--accent)' },
+          { label: 'Standard Refill', count: standardInvoicesCount, color: 'var(--success)' },
+          { label: 'Empty Bottle', count: emptyBottleInvoicesCount, color: '#3b82f6' },
           { label: 'Unpaid', count: invoices.filter(i => i.paymentStatus === 'Unpaid').length, color: 'var(--danger)' },
           { label: 'Partial', count: invoices.filter(i => i.paymentStatus === 'Partial').length, color: '#f59e0b' },
           { label: 'Paid', count: invoices.filter(i => i.paymentStatus === 'Paid').length, color: 'var(--success)' },
@@ -102,7 +116,7 @@ export default function Invoices() {
             borderRadius: 20, padding: '4px 14px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6
           }}>
             <span style={{ color: pill.color, fontWeight: 700 }}>{pill.count}</span>
-            <span style={{ color: 'var(--text-muted)' }}>{pill.label}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{pill.label}</span>
           </div>
         ))}
       </div>
@@ -115,6 +129,7 @@ export default function Invoices() {
                 <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('invoiceNumber')}>Invoice # <SortIcon field="invoiceNumber" /></th>
                 <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('date')}>Date <SortIcon field="date" /></th>
                 <th>Customer</th>
+                <th>Type</th>
                 <th>Items</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('totalAmount')}>Total <SortIcon field="totalAmount" /></th>
                 <th>Paid</th>
@@ -126,36 +141,64 @@ export default function Invoices() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={10} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No invoices found</td></tr>
-              ) : filtered.map(inv => (
-                <tr key={inv.id}>
-                  <td className="text-accent fw-600">{inv.invoiceNumber}</td>
-                  <td>{inv.date}</td>
-                  <td>
-                    <div className="fw-600">{inv.customerName}</div>
-                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>{inv.customerPhone}</div>
-                  </td>
-                  <td>
-                    {inv.items.map((item, idx) => (
-                      <div key={idx} style={{ fontSize: '0.78rem' }}>
-                        {item.qty}× {item.cylinderType}
-                        {item.emptyCollected && <span style={{ color: 'var(--success)', marginLeft: 4 }}>↩</span>}
-                      </div>
-                    ))}
-                  </td>
-                  <td className="fw-600">₹{inv.totalAmount.toLocaleString('en-IN')}</td>
-                  <td className="text-success">₹{inv.paidAmount.toLocaleString('en-IN')}</td>
-                  <td style={{ color: inv.totalAmount - inv.paidAmount > 0 ? 'var(--danger)' : 'var(--text-muted)', fontWeight: inv.totalAmount - inv.paidAmount > 0 ? 700 : 400 }}>
-                    ₹{(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}
-                  </td>
+              ) : filtered.map(inv => {
+                const isEB = inv.invoiceType === 'Empty Bottle';
+                const totalAmt = Number(inv.totalAmount) || 0;
+                const paidAmt = Number(inv.paidAmount) || 0;
+                const bal = totalAmt - paidAmt;
 
-                  <td>{payBadge(inv.paymentStatus)}</td>
-                  <td>
-                    <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/invoices/${inv.id}`)}>
-                      View
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                return (
+                  <tr key={inv.id}>
+                    <td>
+                      <span className="text-accent fw-600">{inv.invoiceNumber}</span>
+                    </td>
+                    <td>{inv.date}</td>
+                    <td>
+                      <div className="fw-600">{inv.customerName}</div>
+                      <div className="text-muted" style={{ fontSize: '0.75rem' }}>{inv.customerPhone}</div>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${isEB ? 'badge-info' : 'badge-success'}`}
+                        style={{ fontSize: '0.72rem', fontWeight: 600, padding: '3px 8px' }}
+                      >
+                        {isEB ? '🫙 Empty Bottle' : '🟢 Refill'}
+                      </span>
+                    </td>
+                    <td>
+                      {inv.items.map((item, idx) => (
+                        <div key={idx} style={{ fontSize: '0.78rem', marginBottom: 2 }}>
+                          {isEB ? (
+                            <span style={{ color: 'var(--info)' }}>
+                              🫙 {item.qty}× {item.cylinderType} (Collected)
+                            </span>
+                          ) : (
+                            <>
+                              {item.qty}× {item.cylinderType}
+                              {item.emptyCollected && (
+                                <span style={{ color: 'var(--success)', marginLeft: 4, fontWeight: 600 }}>
+                                  ↩ {item.emptyCount !== undefined ? item.emptyCount : item.qty} empty
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="fw-600">₹{totalAmt.toLocaleString('en-IN')}</td>
+                    <td className="text-success">₹{paidAmt.toLocaleString('en-IN')}</td>
+                    <td style={{ color: bal > 0 ? 'var(--danger)' : 'var(--text-muted)', fontWeight: bal > 0 ? 700 : 400 }}>
+                      ₹{bal.toLocaleString('en-IN')}
+                    </td>
+                    <td>{payBadge(inv.paymentStatus)}</td>
+                    <td>
+                      <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/invoices/${inv.id}`)}>
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

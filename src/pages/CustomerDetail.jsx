@@ -71,11 +71,17 @@ export default function CustomerDetail() {
           <p className="page-subtitle">{customer.phone} | {customer.address}</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-info" onClick={() => exportCustomerReportPDF(customer, customerInvoices)}>
-            📄 Download Statement (PDF)
+          <button className="btn btn-info btn-sm" onClick={() => navigate(`/invoices/new?type=empty&customer=${customer.id}`)}>
+            🫙 Empty Bottle Invoice
           </button>
-          <button className="btn btn-success" onClick={() => exportCustomerReportExcel(customer, customerInvoices)}>
-            📥 Download Statement (Excel)
+          <button className="btn btn-primary btn-sm" onClick={() => navigate(`/invoices/new?customer=${customer.id}`)}>
+            ➕ Refill Invoice
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportPDF(customer, customerInvoices)}>
+            📄 Statement (PDF)
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportExcel(customer, customerInvoices)}>
+            📥 Statement (Excel)
           </button>
         </div>
       </div>
@@ -232,6 +238,7 @@ export default function CustomerDetail() {
               <tr>
                 <th>Date</th>
                 <th>Invoice #</th>
+                <th>Type</th>
                 <th>Items Summary</th>
                 <th>Total Amount</th>
                 <th>Paid Amount</th>
@@ -242,25 +249,40 @@ export default function CustomerDetail() {
             </thead>
             <tbody>
               {customerInvoices.length === 0 ? (
-                <tr><td colSpan={8} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No transactions found for this customer.</td></tr>
-              ) : customerInvoices.map(inv => (
+                <tr><td colSpan={9} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No transactions found for this customer.</td></tr>
+              ) : customerInvoices.map(inv => {
+                const isEB = inv.invoiceType === 'Empty Bottle';
+                const bal = inv.totalAmount - inv.paidAmount;
+                return (
                 <tr key={inv.id}>
                   <td>{inv.date}</td>
                   <td className="fw-600 text-accent">{inv.invoiceNumber}</td>
+                  <td>
+                    <span className={`badge ${isEB ? 'badge-info' : 'badge-success'}`} style={{ fontSize: '0.7rem' }}>
+                      {isEB ? '🫙 Empty Bottle' : '🟢 Refill'}
+                    </span>
+                  </td>
                   <td style={{ fontSize: '0.8rem' }}>
-                    {inv.items.map(i => `${i.qty}×${i.cylinderType}`).join(', ')}
+                    {isEB ? (
+                      <span style={{ color: 'var(--info)' }}>
+                        {inv.items.map(i => `🫙 ${i.qty}× ${i.cylinderType} (Collected)`).join(', ')}
+                      </span>
+                    ) : (
+                      inv.items.map(i => `${i.qty}× ${i.cylinderType}${i.emptyCollected ? ' (↩ empty)' : ''}`).join(', ')
+                    )}
                   </td>
                   <td className="fw-600">₹{inv.totalAmount.toLocaleString('en-IN')}</td>
                   <td className="text-success">₹{inv.paidAmount.toLocaleString('en-IN')}</td>
-                  <td style={{ color: (inv.totalAmount - inv.paidAmount) > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
-                    ₹{(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}
+                  <td style={{ color: bal > 0 ? 'var(--danger)' : 'var(--text-muted)', fontWeight: bal > 0 ? 700 : 400 }}>
+                    ₹{bal.toLocaleString('en-IN')}
                   </td>
                   <td>{payBadge(inv.paymentStatus)}</td>
                   <td>
                     <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/invoices/${inv.id}`)}>View Invoice</button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

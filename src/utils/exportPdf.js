@@ -16,15 +16,17 @@ export function exportInvoicePDF(invoice) {
   doc.text('Authorized Indian Gas Distributor | Surat, Gujarat', 105, 27, { align: 'center' });
   doc.text('Phone: 9876543210 | GSTIN: 24ABCDE1234F1Z5', 105, 34, { align: 'center' });
 
+  const isEB = invoice.invoiceType === 'Empty Bottle';
+
   // Invoice badge
-  doc.setFillColor(255, 165, 0);
-  doc.roundedRect(140, 50, 60, 28, 3, 3, 'F');
-  doc.setTextColor(15, 23, 42);
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.text('INVOICE', 170, 60, { align: 'center' });
+  doc.setFillColor(isEB ? 59 : 255, isEB ? 130 : 165, isEB ? 246 : 0);
+  doc.roundedRect(130, 50, 70, 28, 3, 3, 'F');
+  doc.setTextColor(isEB ? 255 : 15, isEB ? 255 : 23, isEB ? 255 : 42);
   doc.setFontSize(10);
-  doc.text(invoice.invoiceNumber, 170, 70, { align: 'center' });
+  doc.setFont('helvetica', 'bold');
+  doc.text(isEB ? 'EMPTY BOTTLE RECEIPT' : 'TAX INVOICE', 165, 60, { align: 'center' });
+  doc.setFontSize(10);
+  doc.text(invoice.invoiceNumber, 165, 70, { align: 'center' });
 
   // Invoice info
   doc.setTextColor(30, 30, 30);
@@ -33,13 +35,13 @@ export function exportInvoicePDF(invoice) {
   doc.text(`Date: ${invoice.date}`, 14, 58);
   doc.text(`Payment Mode: ${invoice.paymentMode}`, 14, 66);
 
-  const deliveryColor = invoice.deliveryStatus === 'Delivered' ? [22, 163, 74]
+  const deliveryColor = invoice.deliveryStatus === 'Delivered' || invoice.deliveryStatus === 'Collected' ? [22, 163, 74]
     : invoice.deliveryStatus === 'Out for Delivery' ? [234, 88, 12] : [100, 116, 139];
   doc.setFillColor(...deliveryColor);
   doc.roundedRect(14, 70, 50, 7, 2, 2, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);
-  doc.text(`Delivery: ${invoice.deliveryStatus}`, 39, 75, { align: 'center' });
+  doc.text(`Status: ${invoice.deliveryStatus}`, 39, 75, { align: 'center' });
 
   const payColor = invoice.paymentStatus === 'Paid' ? [22, 163, 74]
     : invoice.paymentStatus === 'Partial' ? [234, 88, 12] : [220, 38, 38];
@@ -62,14 +64,20 @@ export function exportInvoicePDF(invoice) {
   const tableBody = invoice.items.map(item => [
     item.cylinderType,
     item.qty,
-    `Rs. ${item.unitPrice.toLocaleString('en-IN')}`,
-    `Rs. ${(item.qty * item.unitPrice).toLocaleString('en-IN')}`,
-    item.emptyCollected ? '✓ Yes' : '✗ No',
+    `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
+    `Rs. ${((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}`,
+    isEB ? '✓ Collected' : (item.emptyCollected ? '✓ Yes' : '✗ No'),
   ]);
 
   autoTable(doc, {
     startY: 125,
-    head: [['Cylinder', 'Qty', 'Unit Price', 'Amount', 'Empty Collected']],
+    head: [[
+      'Cylinder',
+      isEB ? 'Empty Collected' : 'Qty',
+      isEB ? 'Rate/Refund' : 'Unit Price',
+      'Amount',
+      'Empty Collected'
+    ]],
     body: tableBody,
     theme: 'grid',
     headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold' },

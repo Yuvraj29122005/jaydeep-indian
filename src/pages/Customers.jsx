@@ -382,11 +382,19 @@ export default function Customers() {
 
               {/* Current Balance — Read Only (LIVE from customers array) */}
               <div style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                   <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📊 Current Pending Balance</span>
-                  <span className={`badge ${grandTotal > 0 ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: '0.9rem', fontWeight: 700, padding: '5px 14px' }}>
-                    {grandTotal > 0 ? `${grandTotal} bottles pending` : '✅ All collected'}
-                  </span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      className="btn btn-info btn-sm"
+                      onClick={() => { setBalanceModalId(null); navigate(`/invoices/new?type=empty&customer=${cust.id}`); }}
+                    >
+                      🫙 Create Empty Bottle Invoice
+                    </button>
+                    <span className={`badge ${grandTotal > 0 ? 'badge-danger' : 'badge-success'}`} style={{ fontSize: '0.85rem', fontWeight: 700, padding: '5px 12px' }}>
+                      {grandTotal > 0 ? `${grandTotal} bottles pending` : '✅ All collected'}
+                    </span>
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                   {CYLINDER_TYPES.map(type => {

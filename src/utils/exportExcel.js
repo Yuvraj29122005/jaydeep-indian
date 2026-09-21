@@ -2,24 +2,28 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 
 export function exportInvoiceExcel(invoice) {
+  const isEB = invoice.invoiceType === 'Empty Bottle';
   const ws_data = [
     ['JAYDEEP INDIAN GAS AGENCY'],
+    ['Invoice Type:', isEB ? 'Empty Bottle Collection Invoice' : 'Standard Refill Invoice'],
     ['Invoice Number:', invoice.invoiceNumber],
     ['Date:', invoice.date],
     ['Customer:', invoice.customerName],
     ['Phone:', invoice.customerPhone],
     ['Address:', invoice.customerAddress],
     ['Payment Mode:', invoice.paymentMode],
-    ['Delivery Status:', invoice.deliveryStatus],
+    ['Status:', invoice.deliveryStatus],
     ['Payment Status:', invoice.paymentStatus],
     [],
-    ['Cylinder Type', 'Quantity', 'Unit Price (Rs)', 'Amount (Rs)', 'Empty Collected'],
+    isEB
+      ? ['Cylinder Type', 'Empty Bottles Collected', 'Rate / Refund (Rs)', 'Amount (Rs)', 'Status']
+      : ['Cylinder Type', 'Quantity (Filled)', 'Unit Price (Rs)', 'Amount (Rs)', 'Empty Collected'],
     ...invoice.items.map(item => [
       item.cylinderType,
       item.qty,
       item.unitPrice,
-      item.qty * item.unitPrice,
-      item.emptyCollected ? 'Yes' : 'No',
+      (Number(item.qty) || 0) * (Number(item.unitPrice) || 0),
+      isEB ? 'Collected' : (item.emptyCollected ? `Yes (${item.emptyCount || item.qty})` : 'No'),
     ]),
     [],
     ['', '', '', 'Total Amount:', invoice.totalAmount],
@@ -30,10 +34,10 @@ export function exportInvoiceExcel(invoice) {
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(ws_data);
-  ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+  ws['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Invoice');
+  XLSX.utils.book_append_sheet(wb, ws, isEB ? 'Empty Bottle Receipt' : 'Invoice');
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -41,15 +45,16 @@ export function exportInvoiceExcel(invoice) {
 }
 
 export function exportAllInvoicesExcel(invoices) {
-  const headers = ['Invoice No', 'Date', 'Customer', 'Phone', 'Address', 'Items', 'Total (Rs)', 'Paid (Rs)', 'Balance (Rs)', 'Payment Mode', 'Delivery Status', 'Payment Status', 'Notes'];
+  const headers = ['Invoice No', 'Type', 'Date', 'Customer', 'Phone', 'Address', 'Items', 'Total (Rs)', 'Paid (Rs)', 'Balance (Rs)', 'Payment Mode', 'Delivery Status', 'Payment Status', 'Notes'];
 
   const rows = invoices.map(inv => [
     inv.invoiceNumber,
+    inv.invoiceType === 'Empty Bottle' ? 'Empty Bottle' : 'Refill',
     inv.date,
     inv.customerName,
     inv.customerPhone,
     inv.customerAddress,
-    inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
+    inv.items.map(i => `${i.qty}x${i.cylinderType}${inv.invoiceType === 'Empty Bottle' ? ' (Empty)' : ''}`).join(', '),
     inv.totalAmount,
     inv.paidAmount,
     inv.totalAmount - inv.paidAmount,

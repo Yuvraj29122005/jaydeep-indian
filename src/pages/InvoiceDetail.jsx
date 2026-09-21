@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { exportInvoicePDF } from '../utils/exportPdf';
 import { exportInvoiceExcel } from '../utils/exportExcel';
+import { CYLINDER_TYPES } from '../lib/constants';
 
 const payBadge = (status) => {
   if (status === 'Paid') return <span className="badge badge-success">💰 Paid</span>;
@@ -12,16 +13,16 @@ const payBadge = (status) => {
 
 export default function InvoiceDetail() {
   const { id } = useParams();
-  const { invoices, updateInvoice, customers } = useApp();
+  const { invoices, updateInvoice, deleteInvoice, customers } = useApp();
   const navigate = useNavigate();
 
   const invoice = invoices.find(inv => inv.id === id);
-
 
   const [paymentStatus, setPaymentStatus] = useState(invoice?.paymentStatus || 'Unpaid');
   const [paidAmount, setPaidAmount] = useState(invoice?.paidAmount || 0);
   const [editingPayment, setEditingPayment] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   if (!invoice) {
     return (
@@ -36,10 +37,14 @@ export default function InvoiceDetail() {
     );
   }
 
+  const isEB = invoice.invoiceType === 'Empty Bottle';
   const balance = invoice.totalAmount - paidAmount;
 
   const saveChanges = () => {
-    const newPayStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount >= invoice.totalAmount ? 'Paid' : 'Partial';
+    const newPayStatus = isEB && invoice.totalAmount === 0
+      ? 'Paid'
+      : (paidAmount <= 0 ? 'Unpaid' : paidAmount >= invoice.totalAmount ? 'Paid' : 'Partial');
+
     updateInvoice(id, { paymentStatus: newPayStatus, paidAmount: Number(paidAmount) });
     setPaymentStatus(newPayStatus);
     setSaved(true);
@@ -47,13 +52,27 @@ export default function InvoiceDetail() {
     setTimeout(() => setSaved(false), 2500);
   };
 
+  const handleDelete = async () => {
+    try {
+      await deleteInvoice(id);
+      navigate('/invoices');
+    } catch (err) {
+      alert('Failed to delete invoice: ' + (err.message || err));
+    }
+  };
+
+  const cust = customers.find(c => c.id === invoice.customerId);
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <button className="btn btn-secondary btn-sm" onClick={() => navigate('/invoices')} style={{ marginBottom: 8 }}>← Back</button>
           <h1 className="page-title">{invoice.invoiceNumber}</h1>
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+            <span className={`badge ${isEB ? 'badge-info' : 'badge-success'}`} style={{ fontSize: '0.8rem', fontWeight: 700 }}>
+              {isEB ? '🫙 Empty Bottle Collection Invoice' : '🟢 Standard Refill Invoice'}
+            </span>
             {payBadge(paymentStatus)}
             {saved && <span className="badge badge-success">✓ Saved!</span>}
           </div>
@@ -68,6 +87,9 @@ export default function InvoiceDetail() {
           <button className="btn btn-success" onClick={() => exportInvoiceExcel({ ...invoice, paymentStatus, paidAmount })}>
             📥 Download Excel
           </button>
+          <button className="btn btn-danger" onClick={() => setShowDeleteConfirm(true)}>
+            🗑 Delete
+          </button>
         </div>
       </div>
 
@@ -79,7 +101,9 @@ export default function InvoiceDetail() {
           <div className="inv-sub">Phone: 9876543210 | GSTIN: 24ABCDE1234F1Z5</div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>INVOICE</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+            {isEB ? 'EMPTY BOTTLE RECEIPT' : 'TAX INVOICE'}
+          </div>
           <div className="inv-number text-accent">{invoice.invoiceNumber}</div>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 6 }}>📅 {invoice.date}</div>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>💳 {invoice.paymentMode}</div>
@@ -92,27 +116,31 @@ export default function InvoiceDetail() {
           <h4>👤 Bill To</h4>
           <div className="inv-field"><span className="label">Name</span><span className="value">{invoice.customerName}</span></div>
           <div className="inv-field"><span className="label">Phone</span><span className="value">{invoice.customerPhone}</span></div>
-          <div className="inv-field"><span className="label">Address</span><span className="value" style={{ maxWidth: 200, textAlign: 'right' }}>{invoice.customerAddress}</span></div>
-          {/* Bottle Balance */}
-          {(() => {
-            const cust = customers.find(c => c.id === invoice.customerId);
-            if (!cust || !cust.bottleBalance) return null;
-            const bal = cust.bottleBalance;
-            const totalNet = ['5kg', '19kg', '47.5kg'].reduce((s, t) => {
-              const b = bal[t] || { filledGiven: 0, emptyCollected: 0 };
-              return s + (b.filledGiven - b.emptyCollected);
-            }, 0);
-            return totalNet > 0 ? (
-              <div style={{ marginTop: 12, padding: 8, background: 'rgba(245,158,11,0.06)', borderRadius: 6, border: '1px solid rgba(245,158,11,0.15)', fontSize: '0.78rem' }}>
-                <span style={{ fontWeight: 700 }}>🫙 Bottles with customer: </span>
-                {['5kg', '19kg', '47.5kg'].map(t => {
-                  const b = bal[t] || { filledGiven: 0, emptyCollected: 0 };
-                  const net = b.filledGiven - b.emptyCollected;
-                  return net > 0 ? <span key={t} className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>{t}: {net}</span> : null;
-                })}
+          <div className="inv-field"><span className="label">Address</span><span className="value" style={{ maxWidth: 200, textAlign: 'right' }}>{invoice.customerAddress || '—'}</span></div>
+
+          {/* Current Customer Bottle Status */}
+          {cust && (
+            <div style={{ marginTop: 14, padding: 10, background: 'var(--bg-primary)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '0.78rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)' }}>📊 Customer Current Bottle Status:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>🟢 Total Filled Sold:</span>
+                  <div style={{ marginTop: 2 }}>
+                    {CYLINDER_TYPES.map(t => `${t}: ${cust.bottleBalance?.[t]?.filledGiven || 0}`).join(' · ')}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--danger)', fontWeight: 600 }}>🫙 Pending to Collect:</span>
+                  <div style={{ marginTop: 2 }}>
+                    {CYLINDER_TYPES.map(t => {
+                      const s = cust.emptyBottleStock?.[t] || { withCustomer: 0, collected: 0 };
+                      return `${t}: ${Math.max(0, s.withCustomer - s.collected)}`;
+                    }).join(' · ')}
+                  </div>
+                </div>
               </div>
-            ) : null;
-          })()}
+            </div>
+          )}
         </div>
 
         <div className="invoice-section">
@@ -136,16 +164,20 @@ export default function InvoiceDetail() {
 
       {/* Items Table */}
       <div className="card mb-20">
-        <div className="card-header"><span className="card-title">📦 Cylinder Items</span></div>
+        <div className="card-header">
+          <span className="card-title">
+            {isEB ? '🫙 Empty Bottles Collected' : '📦 Cylinder Items'}
+          </span>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Cylinder Type</th>
-                <th>Quantity</th>
-                <th>Unit Price</th>
+                <th>{isEB ? 'Empty Collected' : 'Quantity (Filled)'}</th>
+                <th>{isEB ? 'Rate / Credit (₹)' : 'Unit Price (₹)'}</th>
                 <th>Amount</th>
-                <th>Empty Collected</th>
+                <th>Bottle Status</th>
               </tr>
             </thead>
             <tbody>
@@ -153,13 +185,16 @@ export default function InvoiceDetail() {
                 <tr key={idx}>
                   <td className="fw-600">{item.cylinderType}</td>
                   <td>{item.qty}</td>
-                  <td>₹{item.unitPrice.toLocaleString('en-IN')}</td>
-                  <td className="fw-600 text-accent">₹{(item.qty * item.unitPrice).toLocaleString('en-IN')}</td>
+                  <td>₹{(Number(item.unitPrice) || 0).toLocaleString('en-IN')}</td>
+                  <td className="fw-600 text-accent">₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</td>
                   <td>
-                    {item.emptyCollected
-                      ? <span className="badge badge-success">✅ Collected {item.emptyCount !== undefined ? item.emptyCount : item.qty}</span>
-                      : <span className="badge badge-muted">Not Collected</span>
-                    }
+                    {isEB ? (
+                      <span className="badge badge-success">✅ Collected {item.qty} empty</span>
+                    ) : (
+                      item.emptyCollected
+                        ? <span className="badge badge-success">✅ Collected {item.emptyCount !== undefined ? item.emptyCount : item.qty} empty</span>
+                        : <span className="badge badge-muted">Not Collected</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -200,6 +235,28 @@ export default function InvoiceDetail() {
                 <img src={invoice.paymentScreenshot} alt="Payment Screenshot" style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 8, border: '1px solid var(--border)' }} />
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">🗑 Delete Invoice</span>
+              <button className="modal-close" onClick={() => setShowDeleteConfirm(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p>Are you sure you want to delete invoice <strong>{invoice.invoiceNumber}</strong>?</p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                This will automatically revert the customer's bottle balance and warehouse stock counts associated with this invoice.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDelete}>Delete Invoice</button>
+            </div>
           </div>
         </div>
       )}

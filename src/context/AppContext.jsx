@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as db from '../lib/database';
-import { defaultBottleBalance } from '../lib/constants';
+import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock } from '../lib/constants';
 
 const AppContext = createContext();
 
@@ -121,28 +121,47 @@ export function AppProvider({ children }) {
     '47.5kg': { filledGiven: 0, emptyCollected: 0 },
   });
 
-  const updateBottleBalance = async (customerId, cylinderType, filledGivenDelta, emptyCollectedDelta) => {
+  const applyInvoiceBottleChangesToCustomer = async (customerId, deltas) => {
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return;
 
-    const bal = customer.bottleBalance || defaultBottleBalance();
-    const typeBal = bal[cylinderType] || { filledGiven: 0, emptyCollected: 0 };
-    const newBalance = {
-      ...bal,
-      [cylinderType]: {
-        filledGiven: Math.max(0, typeBal.filledGiven + filledGivenDelta),
-        emptyCollected: Math.max(0, typeBal.emptyCollected + emptyCollectedDelta),
-      },
-    };
+    const bal = JSON.parse(JSON.stringify(customer.bottleBalance || defaultBottleBalance()));
+    const stock = JSON.parse(JSON.stringify(customer.emptyBottleStock || defaultEmptyStock()));
+
+    CYLINDER_TYPES.forEach(t => {
+      const d = deltas[t];
+      if (d) {
+        if (!bal[t]) bal[t] = { filledGiven: 0, emptyCollected: 0 };
+        if (!stock[t]) stock[t] = { withCustomer: 0, collected: 0 };
+
+        bal[t].filledGiven = Math.max(0, (bal[t].filledGiven || 0) + (d.filledDelta || 0));
+        bal[t].emptyCollected = Math.max(0, (bal[t].emptyCollected || 0) + (d.emptyCollectedDelta || 0));
+
+        stock[t].withCustomer = Math.max(0, (stock[t].withCustomer || 0) + (d.withCustomerDelta || 0));
+        stock[t].collected = Math.max(0, (stock[t].collected || 0) + (d.emptyCollectedDelta || 0));
+      }
+    });
 
     try {
-      await db.patchCustomer(customerId, { bottleBalance: newBalance });
-      setCustomers(prev => prev.map(c =>
-        c.id === customerId ? { ...c, bottleBalance: newBalance } : c
-      ));
+      const updatedCust = await db.patchCustomer(customerId, {
+        bottleBalance: bal,
+        emptyBottleStock: stock,
+      });
+      setCustomers(prev => prev.map(c => c.id === customerId ? updatedCust : c));
+      return updatedCust;
     } catch (err) {
-      console.error('Failed to update bottle balance:', err);
+      console.error('Failed to sync customer bottle status:', err);
     }
+  };
+
+  const updateBottleBalance = async (customerId, cylinderType, filledGivenDelta, emptyCollectedDelta) => {
+    await applyInvoiceBottleChangesToCustomer(customerId, {
+      [cylinderType]: {
+        filledDelta: filledGivenDelta,
+        withCustomerDelta: filledGivenDelta,
+        emptyCollectedDelta: emptyCollectedDelta,
+      }
+    });
   };
 
   const setBottleBalanceDirect = async (customerId, newBalance) => {
@@ -156,7 +175,7 @@ export function AppProvider({ children }) {
     }
   };
 
-  // ==================== EMPTY BOTTLE STOCK (Separate from invoice tracking) ====================
+  // ==================== EMPTY BOTTLE STOCK ====================
 
   const updateEmptyBottleStock = async (customerId, newStock) => {
     try {
@@ -164,6 +183,7 @@ export function AppProvider({ children }) {
       setCustomers(prev => prev.map(c =>
         c.id === customerId ? updatedCustomer : c
       ));
+      return updatedCustomer;
     } catch (err) {
       console.error('Failed to update empty bottle stock:', err);
       throw err;
@@ -216,7 +236,10 @@ export function AppProvider({ children }) {
 
   const createInvoice = async (invoiceData) => {
     try {
-      const invoiceNumber = invoiceData.invoiceNumber || `JIG-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`;
+      const isEB = invoiceData.invoiceType === 'Empty Bottle';
+      const defaultPrefix = isEB ? 'EB' : 'JIG';
+      const invoiceNumber = invoiceData.invoiceNumber || `${defaultPrefix}-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`;
+      
       const newInvoice = await db.insertInvoice({
         ...invoiceData,
         invoiceNumber,
@@ -224,13 +247,31 @@ export function AppProvider({ children }) {
 
       setInvoices(prev => [...prev, newInvoice]);
 
-      // Update stock & bottle balance for each item
-      if (invoiceData.items) {
+      // Calculate deltas for customer and update agency warehouse stock
+      if (invoiceData.items && invoiceData.customerId) {
+        const customerDeltas = {};
+
         for (const item of invoiceData.items) {
-          const emptyGain = item.emptyCollected ? (item.emptyCount !== undefined ? item.emptyCount : item.qty) : 0;
-          await updateStock(item.cylinderType, -item.qty, emptyGain);
-          await updateBottleBalance(invoiceData.customerId, item.cylinderType, item.qty, emptyGain);
+          const type = item.cylinderType;
+          const isItemEmpty = isEB || item.itemType === 'empty' || item.isBottleOnly;
+          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+          const emptyGain = isItemEmpty 
+            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+          // Update warehouse agency stock
+          await updateStock(type, -filledQty, emptyGain);
+
+          if (!customerDeltas[type]) {
+            customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+          }
+          customerDeltas[type].filledDelta += filledQty;
+          customerDeltas[type].withCustomerDelta += filledQty;
+          customerDeltas[type].emptyCollectedDelta += emptyGain;
         }
+
+        // Atomically sync customer status (both empty and filled)
+        await applyInvoiceBottleChangesToCustomer(invoiceData.customerId, customerDeltas);
       }
 
       return newInvoice;
@@ -254,27 +295,103 @@ export function AppProvider({ children }) {
     if (!oldInv) return;
 
     try {
-      if (updates.items) {
-        // Revert old items stock/balance
+      const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
+      const newIsEB = updates.invoiceType === 'Empty Bottle' || (updates.invoiceType === undefined && oldIsEB);
+
+      // Revert old items from warehouse stock and old customer
+      if (oldInv.items && oldInv.customerId) {
+        const revertDeltas = {};
         for (const item of oldInv.items) {
-          const emptyGain = item.emptyCollected ? (item.emptyCount !== undefined ? item.emptyCount : item.qty) : 0;
-          await updateStock(item.cylinderType, item.qty, -emptyGain);
-          await updateBottleBalance(oldInv.customerId, item.cylinderType, -item.qty, -emptyGain);
+          const type = item.cylinderType;
+          const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
+          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+          const emptyGain = isItemEmpty 
+            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+          await updateStock(type, filledQty, -emptyGain);
+
+          if (!revertDeltas[type]) {
+            revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+          }
+          revertDeltas[type].filledDelta -= filledQty;
+          revertDeltas[type].withCustomerDelta -= filledQty;
+          revertDeltas[type].emptyCollectedDelta -= emptyGain;
         }
-        // Apply new items stock/balance
-        for (const item of updates.items) {
-          const emptyGain = item.emptyCollected ? (item.emptyCount !== undefined ? item.emptyCount : item.qty) : 0;
-          await updateStock(item.cylinderType, -item.qty, emptyGain);
-          await updateBottleBalance(updates.customerId || oldInv.customerId, item.cylinderType, item.qty, emptyGain);
+        await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
+      }
+
+      // Apply new items to warehouse stock and new/updated customer
+      const targetCustomerId = updates.customerId || oldInv.customerId;
+      const targetItems = updates.items || oldInv.items;
+
+      if (targetItems && targetCustomerId) {
+        const applyDeltas = {};
+        for (const item of targetItems) {
+          const type = item.cylinderType;
+          const isItemEmpty = newIsEB || item.itemType === 'empty' || item.isBottleOnly;
+          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+          const emptyGain = isItemEmpty 
+            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+          await updateStock(type, -filledQty, emptyGain);
+
+          if (!applyDeltas[type]) {
+            applyDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+          }
+          applyDeltas[type].filledDelta += filledQty;
+          applyDeltas[type].withCustomerDelta += filledQty;
+          applyDeltas[type].emptyCollectedDelta += emptyGain;
         }
+        await applyInvoiceBottleChangesToCustomer(targetCustomerId, applyDeltas);
       }
 
       const updatedInv = await db.patchInvoice(id, updates);
       setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
+      return updatedInv;
     } catch (err) {
       console.error('Failed to edit invoice:', err);
+      throw err;
     }
   };
+
+  const deleteInvoice = async (id) => {
+    const oldInv = invoices.find(i => i.id === id);
+    if (!oldInv) return;
+
+    try {
+      const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
+      if (oldInv.items && oldInv.customerId) {
+        const revertDeltas = {};
+        for (const item of oldInv.items) {
+          const type = item.cylinderType;
+          const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
+          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+          const emptyGain = isItemEmpty 
+            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+          await updateStock(type, filledQty, -emptyGain);
+
+          if (!revertDeltas[type]) {
+            revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+          }
+          revertDeltas[type].filledDelta -= filledQty;
+          revertDeltas[type].withCustomerDelta -= filledQty;
+          revertDeltas[type].emptyCollectedDelta -= emptyGain;
+        }
+        await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
+      }
+
+      await db.removeInvoice(id);
+      setInvoices(prev => prev.filter(inv => inv.id !== id));
+    } catch (err) {
+      console.error('Failed to delete invoice:', err);
+      throw err;
+    }
+  };
+
 
   // ==================== EXPENSES ====================
 
@@ -347,7 +464,7 @@ export function AppProvider({ children }) {
       loading, error, reloadData: loadAllData,
       customers, addCustomer, updateCustomer, deleteCustomer,
       stock, updateStock, addStockManual, getStockByType,
-      invoices, createInvoice, updateInvoice, editInvoiceFull,
+      invoices, createInvoice, updateInvoice, editInvoiceFull, deleteInvoice,
       updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,
       expenses, addExpense, updateExpense, deleteExpense,
       refillTrips, sendForRefill, returnFromRefill,
