@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -15,13 +15,17 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 500));
-    const ok = login(email, password);
-    setLoading(false);
-    if (ok) {
-      navigate('/dashboard');
-    } else {
-      setError('Invalid email or password.');
+    try {
+      const res = await login(identifier, password);
+      if (res.success) {
+        navigate('/dashboard');
+      } else {
+        setError(res.error || 'Invalid username or password.');
+      }
+    } catch (err) {
+      setError('Login failed: ' + (err.message || err));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -42,20 +46,20 @@ export default function Login() {
 
         <div className="portal-indicator">
           <span className="dot-live" />
-          <span>Authorized Agency Staff & Admin Login</span>
+          <span>Authorized Staff, Visitor & Admin Login</span>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div>
-            <label htmlFor="email">Email Address</label>
+            <label htmlFor="identifier">Username or Email Address</label>
             <input
-              id="email"
+              id="identifier"
               className="login-input"
-              type="email"
-              placeholder="e.g. admin@gasagency.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              autoComplete="email"
+              type="text"
+              placeholder="e.g. admin or visitor1"
+              value={identifier}
+              onChange={e => setIdentifier(e.target.value)}
+              autoComplete="username"
               required
             />
           </div>

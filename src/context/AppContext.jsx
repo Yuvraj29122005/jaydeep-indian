@@ -1,11 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as db from '../lib/database';
-import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock } from '../lib/constants';
+import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock, DEFAULT_MARKET_PRICES } from '../lib/constants';
 
 const AppContext = createContext();
 
 export function AppProvider({ children }) {
-  // Auth state — hardcoded credentials
+  // Auth state — user & role management
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('jig_current_user');
+      if (saved) return JSON.parse(saved);
+    } catch (_e) {}
+    const loggedIn = localStorage.getItem('jig_logged_in') === 'true';
+    return loggedIn ? db.SUPER_ADMIN_USER : null;
+  });
+
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     return localStorage.getItem('jig_logged_in') === 'true';
   });
@@ -16,6 +25,10 @@ export function AppProvider({ children }) {
   const [invoices, setInvoices] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [refillTrips, setRefillTrips] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [marketPrices, setMarketPrices] = useState(DEFAULT_MARKET_PRICES);
+  const [marketPricesMeta, setMarketPricesMeta] = useState({ updatedAt: null, updatedBy: 'Admin' });
+  const [appUsers, setAppUsers] = useState([]);
 
   // Loading & error states
   const [loading, setLoading] = useState(true);
@@ -24,6 +37,9 @@ export function AppProvider({ children }) {
   // Persist login state
   useEffect(() => {
     localStorage.setItem('jig_logged_in', isLoggedIn);
+    if (!isLoggedIn) {
+      localStorage.removeItem('jig_current_user');
+    }
   }, [isLoggedIn]);
 
   // Load all data from Supabase on mount (if logged in)
@@ -41,18 +57,30 @@ export function AppProvider({ children }) {
         invoicesData,
         expensesData,
         refillTripsData,
+        notesData,
+        marketData,
+        usersData,
       ] = await Promise.all([
-        db.fetchCustomers(),
-        db.fetchStock(),
-        db.fetchInvoices(),
-        db.fetchExpenses(),
-        db.fetchRefillTrips(),
+        db.fetchCustomers().catch(err => { console.warn('Customers fetch fallback:', err); return []; }),
+        db.fetchStock().catch(err => { console.warn('Stock fetch fallback:', err); return []; }),
+        db.fetchInvoices().catch(err => { console.warn('Invoices fetch fallback:', err); return []; }),
+        db.fetchExpenses().catch(err => { console.warn('Expenses fetch fallback:', err); return []; }),
+        db.fetchRefillTrips().catch(err => { console.warn('Refill trips fetch fallback:', err); return []; }),
+        db.fetchNotes().catch(err => { console.warn('Notes fetch fallback:', err); return []; }),
+        db.fetchMarketPrices().catch(err => { console.warn('Market prices fetch fallback:', err); return null; }),
+        db.fetchAppUsers().catch(err => { console.warn('App users fetch fallback:', err); return []; }),
       ]);
-      setCustomers(customersData);
-      setStock(stockData);
-      setInvoices(invoicesData);
-      setExpenses(expensesData);
-      setRefillTrips(refillTripsData);
+      setCustomers(customersData || []);
+      setStock(stockData || []);
+      setInvoices(invoicesData || []);
+      setExpenses(expensesData || []);
+      setRefillTrips(refillTripsData || []);
+      setNotes(notesData || []);
+      if (marketData?.prices) {
+        setMarketPrices(marketData.prices);
+        setMarketPricesMeta(marketData.meta || { updatedAt: null, updatedBy: 'Admin' });
+      }
+      setAppUsers(usersData || []);
     } catch (err) {
       console.error('Failed to load data from Supabase:', err);
       setError(err.message || 'Failed to load data');
@@ -65,18 +93,85 @@ export function AppProvider({ children }) {
     loadAllData();
   }, [loadAllData]);
 
-  // ==================== AUTH ====================
+  // ==================== AUTH & PERMISSIONS ====================
 
-  const login = (email, password) => {
-    if (email === 'jaydeepindian01@gmail.com' && password === 'Jaydeep@1234') {
-      setIsLoggedIn(true);
-      return true;
+  const login = async (identifier, password) => {
+    try {
+      const user = await db.authenticateUser(identifier, password);
+      if (user) {
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+        localStorage.setItem('jig_logged_in', 'true');
+        localStorage.setItem('jig_current_user', JSON.stringify(user));
+        return { success: true, user };
+      }
+      return { success: false, error: 'Invalid username or password.' };
+    } catch (err) {
+      if (err.message === 'ACCOUNT_INACTIVE') {
+        return { success: false, error: 'This account has been deactivated by the admin.' };
+      }
+      return { success: false, error: err.message || 'Login failed.' };
     }
-    return false;
   };
 
   const logout = () => {
     setIsLoggedIn(false);
+    setCurrentUser(null);
+    localStorage.removeItem('jig_logged_in');
+    localStorage.removeItem('jig_current_user');
+  };
+
+  const hasModuleAccess = (module) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+    const perm = currentUser.permissions?.[module];
+    return perm === 'view' || perm === 'edit' || perm === 'full';
+  };
+
+  const canEditModule = (module) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+    const perm = currentUser.permissions?.[module];
+    return perm === 'edit' || perm === 'full';
+  };
+
+  // ==================== USER MANAGEMENT ====================
+
+  const createAppUser = async (userData) => {
+    try {
+      const created = await db.insertAppUser(userData);
+      setAppUsers(prev => [created, ...prev.filter(u => u.id !== created.id)]);
+      return created;
+    } catch (err) {
+      console.error('Failed to create user:', err);
+      throw err;
+    }
+  };
+
+  const updateAppUser = async (id, updates) => {
+    try {
+      const updated = await db.patchAppUser(id, updates);
+      setAppUsers(prev => prev.map(u => u.id === id ? updated : u));
+      if (currentUser?.id === id) {
+        const newCur = { ...currentUser, ...updated };
+        setCurrentUser(newCur);
+        localStorage.setItem('jig_current_user', JSON.stringify(newCur));
+      }
+      return updated;
+    } catch (err) {
+      console.error('Failed to update user:', err);
+      throw err;
+    }
+  };
+
+  const deleteAppUser = async (id) => {
+    try {
+      await db.removeAppUser(id);
+      setAppUsers(prev => prev.filter(u => u.id !== id));
+    } catch (err) {
+      console.error('Failed to delete user:', err);
+      throw err;
+    }
   };
 
   // ==================== CUSTOMERS ====================
@@ -456,18 +551,119 @@ export function AppProvider({ children }) {
     }
   };
 
+  // ==================== PERSONAL NOTES ====================
+
+  const addNote = async (noteData) => {
+    try {
+      const newNote = await db.insertNote(noteData);
+      setNotes(prev => [newNote, ...prev]);
+      return newNote;
+    } catch (err) {
+      console.error('Failed to add note:', err);
+      throw err;
+    }
+  };
+
+  const updateNote = async (id, updates) => {
+    try {
+      const updatedNote = await db.patchNote(id, updates);
+      setNotes(prev => prev.map(n => n.id === id ? updatedNote : n));
+      return updatedNote;
+    } catch (err) {
+      console.error('Failed to update note:', err);
+      throw err;
+    }
+  };
+
+  const deleteNote = async (id) => {
+    try {
+      await db.removeNote(id);
+      setNotes(prev => prev.filter(n => n.id !== id));
+    } catch (err) {
+      console.error('Failed to delete note:', err);
+      throw err;
+    }
+  };
+
+  // ==================== RESET ALL DATA ====================
+
+  const RESET_PIN = '2323';
+
+  const resetAllDataWithPin = async (enteredPin) => {
+    if (enteredPin !== RESET_PIN) {
+      throw new Error('INVALID_PIN');
+    }
+    try {
+      await db.resetAllData();
+      // Clear all local state
+      setCustomers([]);
+      setInvoices([]);
+      setExpenses([]);
+      setRefillTrips([]);
+      setNotes([]);
+      setStock(prev => prev.map(s => ({ ...s, filledCount: 0, emptyCount: 0 })));
+      return true;
+    } catch (err) {
+      console.error('Failed to reset data:', err);
+      throw err;
+    }
+  };
+
+  // ==================== MARKET PRICES & DISCOUNTS ====================
+
+  const updateMarketPrices = async (newPrices, autoUpdateCustomers = true) => {
+    try {
+      const oldMarketPrices = { ...marketPrices };
+      const saved = await db.saveMarketPrices(newPrices);
+      setMarketPrices(saved.prices);
+      setMarketPricesMeta(saved.meta);
+
+      if (autoUpdateCustomers && customers.length > 0) {
+        const updatedCusts = await db.updateAllCustomersWithNewMarketPrices(saved.prices, customers, oldMarketPrices);
+        setCustomers(updatedCusts);
+        return { updatedCustomersCount: updatedCusts.length, prices: saved.prices };
+      }
+      return { updatedCustomersCount: 0, prices: saved.prices };
+    } catch (err) {
+      console.error('Failed to update market prices:', err);
+      throw err;
+    }
+  };
+
+  const updateCustomerDiscounts = async (customerId, discounts, customPrices) => {
+    try {
+      const updatedCust = await db.patchCustomer(customerId, {
+        prices: {
+          ...customPrices,
+          discounts,
+        },
+        discounts,
+      });
+      setCustomers(prev => prev.map(c => c.id === customerId ? updatedCust : c));
+      return updatedCust;
+    } catch (err) {
+      console.error('Failed to update customer discounts:', err);
+      throw err;
+    }
+  };
+
   // ==================== CONTEXT VALUE ====================
 
   return (
     <AppContext.Provider value={{
       isLoggedIn, login, logout,
+      currentUser, appUsers, createAppUser, updateAppUser, deleteAppUser,
+      hasModuleAccess, canEditModule,
       loading, error, reloadData: loadAllData,
       customers, addCustomer, updateCustomer, deleteCustomer,
+      marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
       stock, updateStock, addStockManual, getStockByType,
       invoices, createInvoice, updateInvoice, editInvoiceFull, deleteInvoice,
       updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,
       expenses, addExpense, updateExpense, deleteExpense,
       refillTrips, sendForRefill, returnFromRefill,
+      notes, addNote, updateNote, deleteNote,
+      resetAllDataWithPin,
     }}>
       {children}
     </AppContext.Provider>

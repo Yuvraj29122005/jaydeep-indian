@@ -16,9 +16,93 @@ const payBadge = (status) => {
 export default function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { customers, invoices } = useApp();
+  const { customers, invoices, marketPrices, updateCustomerDiscounts, canEditModule } = useApp();
+  const canEdit = canEditModule('customers');
 
   const customer = customers.find(c => c.id === id);
+
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [editPrices, setEditPrices] = useState({});
+  const [editDiscounts, setEditDiscounts] = useState({});
+  const [editDiscountAmts, setEditDiscountAmts] = useState({});
+  const [savingDiscount, setSavingDiscount] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const openDiscountEditor = () => {
+    if (!customer) return;
+    const prices = {};
+    const discounts = {};
+    const amounts = {};
+
+    CYLINDER_TYPES.forEach(t => {
+      const mkt = Number(marketPrices?.[t]) || 0;
+      const p = customer.prices?.[t] !== undefined ? Number(customer.prices[t]) : mkt;
+      prices[t] = p;
+
+      let pct = customer.discounts?.[t];
+      if (pct === undefined || pct === null) {
+        pct = mkt > 0 && p < mkt ? Number((((mkt - p) / mkt) * 100).toFixed(1)) : 0;
+      }
+      discounts[t] = Number(pct);
+      amounts[t] = Math.max(0, mkt - p);
+    });
+
+    setEditPrices(prices);
+    setEditDiscounts(discounts);
+    setEditDiscountAmts(amounts);
+    setSaveSuccess(false);
+    setDiscountModalOpen(true);
+  };
+
+  const handlePriceChange = (type, val) => {
+    const p = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices?.[type]) || 0;
+    const amt = mkt - p;
+    const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setEditPrices(prev => ({ ...prev, [type]: p }));
+    setEditDiscounts(prev => ({ ...prev, [type]: pct }));
+    setEditDiscountAmts(prev => ({ ...prev, [type]: Math.max(0, amt) }));
+  };
+
+  const handleDiscountPctChange = (type, val) => {
+    const pct = Math.max(0, Math.min(100, Number(val) || 0));
+    const mkt = Number(marketPrices?.[type]) || 0;
+    const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
+    const amt = mkt - p;
+
+    setEditPrices(prev => ({ ...prev, [type]: p }));
+    setEditDiscounts(prev => ({ ...prev, [type]: pct }));
+    setEditDiscountAmts(prev => ({ ...prev, [type]: Math.max(0, amt) }));
+  };
+
+  const handleDiscountAmtChange = (type, val) => {
+    const amt = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices?.[type]) || 0;
+    const p = Math.max(0, mkt - amt);
+    const pct = mkt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setEditPrices(prev => ({ ...prev, [type]: p }));
+    setEditDiscounts(prev => ({ ...prev, [type]: pct }));
+    setEditDiscountAmts(prev => ({ ...prev, [type]: amt }));
+  };
+
+  const saveDiscounts = async () => {
+    if (!customer) return;
+    setSavingDiscount(true);
+    try {
+      await updateCustomerDiscounts(customer.id, editDiscounts, editPrices);
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSaveSuccess(false);
+        setDiscountModalOpen(false);
+      }, 1200);
+    } catch (err) {
+      alert('Failed to save discounts: ' + (err.message || err));
+    } finally {
+      setSavingDiscount(false);
+    }
+  };
 
   if (!customer) {
     return (
@@ -71,12 +155,16 @@ export default function CustomerDetail() {
           <p className="page-subtitle">{customer.phone} | {customer.address}</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-info btn-sm" onClick={() => navigate(`/invoices/new?type=empty&customer=${customer.id}`)}>
-            🫙 Empty Bottle Invoice
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={() => navigate(`/invoices/new?customer=${customer.id}`)}>
-            ➕ Refill Invoice
-          </button>
+          {canEdit && (
+            <>
+              <button className="btn btn-info btn-sm" onClick={() => navigate(`/invoices/new?type=empty&customer=${customer.id}`)}>
+                🫙 Empty Bottle Invoice
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={() => navigate(`/invoices/new?customer=${customer.id}`)}>
+                ➕ Refill Invoice
+              </button>
+            </>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportPDF(customer, customerInvoices)}>
             📄 Statement (PDF)
           </button>
@@ -201,29 +289,86 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Customer-wise Prices */}
+      {/* Customer-wise Prices & Market Comparison */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-header">
-          <span className="card-title">💰 Customer-wise Prices</span>
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <span className="card-title">💰 Customer Pricing & Market Price Comparison</span>
+            <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Comparison of customer prices vs permanent market benchmark prices, showing discount amount and percentage.
+            </p>
+          </div>
+          {canEdit && (
+            <button className="btn btn-primary btn-sm" onClick={openDiscountEditor} style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+              ✏️ Adjust Customer Discounts
+            </button>
+          )}
         </div>
         <div className="card-body">
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {CYLINDER_TYPES.map(type => (
-              <div key={type} style={{
-                padding: '12px 20px',
-                borderRadius: 10,
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--border)',
-                display: 'flex', alignItems: 'center', gap: 10,
-                minWidth: 160,
-              }}>
-                <span style={{ fontSize: '1.2rem' }}>{CYL_ICONS[type]}</span>
-                <div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>{type}</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)' }}>₹{customer.prices[type]}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+            {CYLINDER_TYPES.map(type => {
+              const mktPrice = Number(marketPrices?.[type]) || 0;
+              const custPrice = customer.prices?.[type] !== undefined ? Number(customer.prices[type]) : mktPrice;
+              const discountAmt = mktPrice - custPrice;
+              const discountPct = mktPrice > 0 ? ((discountAmt / mktPrice) * 100) : 0;
+              const isDiscounted = discountAmt > 0;
+              const isEqual = discountAmt === 0;
+
+              return (
+                <div key={type} style={{
+                  padding: '16px 20px',
+                  borderRadius: 12,
+                  background: isDiscounted ? 'rgba(34,197,94,0.03)' : 'var(--bg-primary)',
+                  border: isDiscounted ? '1px solid rgba(34,197,94,0.3)' : '1px solid var(--border)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: '1.4rem' }}>{CYL_ICONS[type]}</span>
+                      <div>
+                        <div style={{ fontSize: '0.92rem', fontWeight: 700 }}>{type} Cylinder</div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Standard Rate</div>
+                      </div>
+                    </div>
+                    {isDiscounted ? (
+                      <span className="badge badge-success" style={{ fontSize: '0.75rem', fontWeight: 700, padding: '4px 10px' }}>
+                        {discountPct.toFixed(1)}% OFF
+                      </span>
+                    ) : isEqual ? (
+                      <span className="badge badge-muted" style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
+                        Market Rate
+                      </span>
+                    ) : (
+                      <span className="badge badge-warning" style={{ fontSize: '0.75rem', fontWeight: 700, padding: '4px 10px' }}>
+                        +{Math.abs(discountPct).toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, padding: '10px 12px', background: 'var(--bg-body)', borderRadius: 8, marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>🏷️ Market Price</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        ₹{mktPrice.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>💰 Customer Price</div>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent)' }}>
+                        ₹{custPrice.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Per Cylinder Discount:</span>
+                    <span style={{ fontWeight: 700, color: isDiscounted ? 'var(--success)' : 'var(--text-muted)' }}>
+                      {isDiscounted ? `₹${discountAmt} saved (${discountPct.toFixed(1)}%)` : 'No discount (0%)'}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -287,6 +432,101 @@ export default function CustomerDetail() {
           </table>
         </div>
       </div>
+      {/* Customer Discount & Pricing Modal */}
+      {discountModalOpen && (
+        <div className="modal-overlay" onClick={() => setDiscountModalOpen(false)}>
+          <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">🏷️ Adjust Discounts & Prices — {customer.name}</span>
+              <button className="modal-close" onClick={() => setDiscountModalOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ padding: 12, background: 'rgba(59,130,246,0.08)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+                💡 <strong>Dynamic Sync:</strong> You can edit either the <strong>Customer Price (₹)</strong>, <strong>Discount Percentage (%)</strong>, or <strong>Discount Amount (₹)</strong>. The other two calculate automatically and save to the database!
+              </div>
+
+              {saveSuccess && (
+                <div style={{ padding: 10, background: 'rgba(34,197,94,0.1)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)', fontWeight: 700, fontSize: '0.88rem', marginBottom: 14, textAlign: 'center' }}>
+                  ✅ Customer discounts and prices saved to database!
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {CYLINDER_TYPES.map(type => {
+                  const mkt = Number(marketPrices?.[type]) || 0;
+                  const curPrice = editPrices[type] !== undefined ? editPrices[type] : mkt;
+                  const curDiscountPct = editDiscounts[type] !== undefined ? editDiscounts[type] : 0;
+                  const curDiscountAmt = editDiscountAmts[type] !== undefined ? editDiscountAmts[type] : Math.max(0, mkt - curPrice);
+
+                  return (
+                    <div key={type} style={{ padding: 14, background: 'var(--bg-body)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {CYL_ICONS[type]} {type} Cylinder
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                          Market Price: <strong style={{ color: 'var(--accent)' }}>₹{mkt}</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curPrice}
+                            onChange={e => handlePriceChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>🏷️ Discount (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            className="form-control"
+                            value={curDiscountPct}
+                            onChange={e => handleDiscountPctChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>✂️ Discount Amount (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curDiscountAmt}
+                            onChange={e => handleDiscountAmtChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                        <span>Savings:</span>
+                        <span style={{ fontWeight: 600, color: curDiscountAmt > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {curDiscountAmt > 0 ? `Customer saves ₹${curDiscountAmt} (${curDiscountPct}%) per cylinder` : 'Standard market rate (0% discount)'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setDiscountModalOpen(false)}>Close</button>
+              <button className="btn btn-primary" onClick={saveDiscounts} disabled={savingDiscount}>
+                {savingDiscount ? 'Saving...' : '💾 Save Customer Pricing'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

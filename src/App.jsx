@@ -14,10 +14,20 @@ import InvoiceDetail from './pages/InvoiceDetail';
 import Reports from './pages/Reports';
 import Expenses from './pages/Expenses';
 import RefillTracking from './pages/RefillTracking';
+import PersonalNotes from './pages/PersonalNotes';
+import UserManagement from './pages/UserManagement';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useApp();
   return isLoggedIn ? children : <Navigate to="/login" replace />;
+}
+
+function ModuleGuard({ module, children }) {
+  const { hasModuleAccess, currentUser } = useApp();
+  if (module === 'users') {
+    return currentUser?.role === 'admin' ? children : <Navigate to="/dashboard" replace />;
+  }
+  return hasModuleAccess(module) ? children : <Navigate to="/dashboard" replace />;
 }
 
 function AppRoutes() {
@@ -27,17 +37,19 @@ function AppRoutes() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={isLoggedIn ? <Navigate to="/dashboard" replace /> : <Login />} />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/stock" element={<Stock />} />
-        <Route path="/customers" element={<Customers />} />
-        <Route path="/customers/:id" element={<CustomerDetail />} />
-        <Route path="/invoices" element={<Invoices />} />
-        <Route path="/invoices/new" element={<CreateInvoice />} />
-        <Route path="/invoices/edit/:id" element={<CreateInvoice />} />
-        <Route path="/invoices/:id" element={<InvoiceDetail />} />
-        <Route path="/refill" element={<RefillTracking />} />
-        <Route path="/expenses" element={<Expenses />} />
-        <Route path="/reports" element={<Reports />} />
+        <Route path="/dashboard" element={<ModuleGuard module="dashboard"><Dashboard /></ModuleGuard>} />
+        <Route path="/stock" element={<ModuleGuard module="stock"><Stock /></ModuleGuard>} />
+        <Route path="/customers" element={<ModuleGuard module="customers"><Customers /></ModuleGuard>} />
+        <Route path="/customers/:id" element={<ModuleGuard module="customers"><CustomerDetail /></ModuleGuard>} />
+        <Route path="/invoices" element={<ModuleGuard module="invoices"><Invoices /></ModuleGuard>} />
+        <Route path="/invoices/new" element={<ModuleGuard module="invoices"><CreateInvoice /></ModuleGuard>} />
+        <Route path="/invoices/edit/:id" element={<ModuleGuard module="invoices"><CreateInvoice /></ModuleGuard>} />
+        <Route path="/invoices/:id" element={<ModuleGuard module="invoices"><InvoiceDetail /></ModuleGuard>} />
+        <Route path="/refill" element={<ModuleGuard module="refill"><RefillTracking /></ModuleGuard>} />
+        <Route path="/expenses" element={<ModuleGuard module="expenses"><Expenses /></ModuleGuard>} />
+        <Route path="/reports" element={<ModuleGuard module="reports"><Reports /></ModuleGuard>} />
+        <Route path="/notes" element={<ModuleGuard module="notes"><PersonalNotes /></ModuleGuard>} />
+        <Route path="/users" element={<ModuleGuard module="users"><UserManagement /></ModuleGuard>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

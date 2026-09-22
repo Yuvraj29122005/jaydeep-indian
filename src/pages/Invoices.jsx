@@ -11,8 +11,9 @@ const payBadge = (status) => {
 };
 
 export default function Invoices() {
-  const { invoices } = useApp();
+  const { invoices, canEditModule } = useApp();
   const navigate = useNavigate();
+  const canEdit = canEditModule('invoices');
   const [search, setSearch] = useState('');
   const [filterPayment, setFilterPayment] = useState('All');
   const [filterType, setFilterType] = useState('All');
@@ -60,8 +61,12 @@ export default function Invoices() {
         <div className="btn-group">
           <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(invoices)}>📥 Excel</button>
           <button className="btn btn-secondary" onClick={() => exportAllInvoicesPDF(invoices)}>📄 PDF</button>
-          <button className="btn btn-info" onClick={() => navigate('/invoices/new?type=empty')}>🫙 Empty Bottle Invoice</button>
-          <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>➕ Refill Invoice</button>
+          {canEdit && (
+            <>
+              <button className="btn btn-info" onClick={() => navigate('/invoices/new?type=empty')}>🫙 Empty Bottle Invoice</button>
+              <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>➕ Refill Invoice</button>
+            </>
+          )}
         </div>
       </div>
 

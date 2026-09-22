@@ -7,11 +7,6 @@ import { CYLINDER_TYPES } from '../lib/constants';
 const CUSTOMER_TYPES = ['Domestic', 'Commercial', 'Hotel', 'Industrial'];
 const CYL_ICONS = { '5kg': '🟡', '19kg': '🟠', '47.5kg': '🔴' };
 
-const emptyForm = {
-  name: '', phone: '', address: '', type: 'Domestic',
-  prices: { '5kg': 450, '19kg': 950, '47.5kg': 2200 }
-};
-
 const defaultBalance = () => ({
   '5kg': { filledGiven: 0, emptyCollected: 0 },
   '19kg': { filledGiven: 0, emptyCollected: 0 },
@@ -20,14 +15,27 @@ const defaultBalance = () => ({
 
 export default function Customers() {
   const navigate = useNavigate();
-  const { customers, addCustomer, updateCustomer, deleteCustomer, updateEmptyBottleStock, loading } = useApp();
+  const {
+    customers, addCustomer, updateCustomer, deleteCustomer, updateEmptyBottleStock,
+    marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
+    canEditModule
+  } = useApp();
+  const canEdit = canEditModule('customers');
+
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('All');
   const [modal, setModal] = useState(null); // null | 'add' | 'edit'
-  const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  // Bottle balance modal — stores customer ID, not the object
+
+  // Form for Add/Edit customer
+  const [form, setForm] = useState({
+    name: '', phone: '', address: '', type: 'Domestic',
+    prices: { '5kg': 450, '19kg': 950, '47.5kg': 2200 },
+    discounts: { '5kg': 0, '19kg': 0, '47.5kg': 0 },
+  });
+
+  // Bottle balance modal
   const [balanceModalId, setBalanceModalId] = useState(null);
   const balanceModalCustomer = balanceModalId ? customers.find(c => c.id === balanceModalId) : null;
   
@@ -41,6 +49,23 @@ export default function Customers() {
   const [collectForm, setCollectForm] = useState(defaultEmptyStock());
   const [collectSuccess, setCollectSuccess] = useState(false);
 
+  // ==================== MARKET PRICE MODAL STATE ====================
+  const [marketModalOpen, setMarketModalOpen] = useState(false);
+  const [marketForm, setMarketForm] = useState({ ...marketPrices });
+  const [autoUpdateCustPrices, setAutoUpdateCustPrices] = useState(true);
+  const [marketUpdateLoading, setMarketUpdateLoading] = useState(false);
+  const [marketUpdateSuccess, setMarketUpdateSuccess] = useState('');
+
+  // ==================== INDIVIDUAL CUSTOMER DISCOUNT MODAL STATE ====================
+  const [discountModalCust, setDiscountModalCust] = useState(null);
+  const [discountForm, setDiscountForm] = useState({
+    prices: {},
+    discounts: {},
+    discountAmounts: {},
+  });
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [discountSuccess, setDiscountSuccess] = useState(false);
+
   const filtered = customers.filter(c => {
     const searchLower = (search || '').toLowerCase();
     const nameMatch = (c.name || '').toLowerCase().includes(searchLower);
@@ -52,14 +77,42 @@ export default function Customers() {
     return matchSearch && matchType;
   });
 
+  // Open Add Customer Modal
   const openAdd = () => {
-    setForm(emptyForm);
+    setForm({
+      name: '', phone: '', address: '', type: 'Domestic',
+      prices: {
+        '5kg': marketPrices['5kg'] || 500,
+        '19kg': marketPrices['19kg'] || 1000,
+        '47.5kg': marketPrices['47.5kg'] || 2300,
+      },
+      discounts: { '5kg': 0, '19kg': 0, '47.5kg': 0 }
+    });
     setEditId(null);
     setModal('add');
   };
 
+  // Open Edit Customer Modal
   const openEdit = (c) => {
-    setForm({ name: c.name, phone: c.phone, address: c.address, type: c.type, prices: { ...c.prices } });
+    const custDiscounts = {};
+    CYLINDER_TYPES.forEach(t => {
+      if (c.discounts?.[t] !== undefined) {
+        custDiscounts[t] = c.discounts[t];
+      } else {
+        const mkt = Number(marketPrices[t]) || 0;
+        const p = c.prices?.[t] !== undefined ? Number(c.prices[t]) : mkt;
+        custDiscounts[t] = mkt > 0 && p < mkt ? Number((((mkt - p) / mkt) * 100).toFixed(1)) : 0;
+      }
+    });
+
+    setForm({
+      name: c.name,
+      phone: c.phone,
+      address: c.address,
+      type: c.type,
+      prices: { ...c.prices },
+      discounts: custDiscounts,
+    });
     setEditId(c.id);
     setModal('edit');
   };
@@ -74,14 +127,18 @@ export default function Customers() {
     setBalanceModalId(c.id);
   };
 
-  const submitForm = () => {
+  const submitForm = async () => {
     if (!form.name || !form.phone) return alert('Name and phone are required');
-    if (modal === 'add') {
-      addCustomer(form);
-    } else {
-      updateCustomer(editId, form);
+    try {
+      if (modal === 'add') {
+        await addCustomer(form);
+      } else {
+        await updateCustomer(editId, form);
+      }
+      setModal(null);
+    } catch (err) {
+      alert('Failed to save customer: ' + (err.message || err));
     }
-    setModal(null);
   };
 
   const handleDelete = (id) => {
@@ -89,12 +146,122 @@ export default function Customers() {
     setDeleteConfirm(null);
   };
 
-  const updatePrice = (type, val) => {
-    setForm(f => ({ ...f, prices: { ...f.prices, [type]: Number(val) } }));
+  // ==================== MARKET PRICE UPDATE ====================
+  const openMarketModal = () => {
+    setMarketForm({
+      '5kg': marketPrices['5kg'] || 500,
+      '19kg': marketPrices['19kg'] || 1000,
+      '47.5kg': marketPrices['47.5kg'] || 2300,
+    });
+    setAutoUpdateCustPrices(true);
+    setMarketUpdateSuccess('');
+    setMarketModalOpen(true);
   };
 
+  const handleSaveMarketPrices = async () => {
+    setMarketUpdateLoading(true);
+    try {
+      const res = await updateMarketPrices(marketForm, autoUpdateCustPrices);
+      if (res.updatedCustomersCount > 0) {
+        setMarketUpdateSuccess(`✅ Market prices saved! Recalculated prices for ${res.updatedCustomersCount} customers preserving their discount percentages.`);
+      } else {
+        setMarketUpdateSuccess('✅ Market prices saved to database!');
+      }
+      setTimeout(() => {
+        setMarketUpdateSuccess('');
+        setMarketModalOpen(false);
+      }, 1600);
+    } catch (err) {
+      alert('Failed to update market prices: ' + (err.message || err));
+    } finally {
+      setMarketUpdateLoading(false);
+    }
+  };
 
+  // ==================== INDIVIDUAL CUSTOMER DISCOUNT MODAL ====================
+  const openDiscountModal = (c) => {
+    const prices = {};
+    const discounts = {};
+    const amounts = {};
 
+    CYLINDER_TYPES.forEach(t => {
+      const mkt = Number(marketPrices[t]) || 0;
+      const p = c.prices?.[t] !== undefined ? Number(c.prices[t]) : mkt;
+      prices[t] = p;
+
+      let pct = c.discounts?.[t];
+      if (pct === undefined || pct === null) {
+        pct = mkt > 0 && p < mkt ? Number((((mkt - p) / mkt) * 100).toFixed(1)) : 0;
+      }
+      discounts[t] = Number(pct);
+      amounts[t] = Math.max(0, mkt - p);
+    });
+
+    setDiscountForm({ prices, discounts, discountAmounts: amounts });
+    setDiscountSuccess(false);
+    setDiscountModalCust(c);
+  };
+
+  const handleCustomerPriceChange = (type, val) => {
+    const p = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices[type]) || 0;
+    const amt = mkt - p;
+    const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setDiscountForm(prev => ({
+      ...prev,
+      prices: { ...prev.prices, [type]: p },
+      discounts: { ...prev.discounts, [type]: pct },
+      discountAmounts: { ...prev.discountAmounts, [type]: Math.max(0, amt) },
+    }));
+  };
+
+  const handleCustomerDiscountPctChange = (type, val) => {
+    const pct = Math.max(0, Math.min(100, Number(val) || 0));
+    const mkt = Number(marketPrices[type]) || 0;
+    const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
+    const amt = mkt - p;
+
+    setDiscountForm(prev => ({
+      ...prev,
+      prices: { ...prev.prices, [type]: p },
+      discounts: { ...prev.discounts, [type]: pct },
+      discountAmounts: { ...prev.discountAmounts, [type]: Math.max(0, amt) },
+    }));
+  };
+
+  const handleCustomerDiscountAmtChange = (type, val) => {
+    const amt = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices[type]) || 0;
+    const p = Math.max(0, mkt - amt);
+    const pct = mkt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setDiscountForm(prev => ({
+      ...prev,
+      prices: { ...prev.prices, [type]: p },
+      discounts: { ...prev.discounts, [type]: pct },
+      discountAmounts: { ...prev.discountAmounts, [type]: amt },
+    }));
+  };
+
+  const handleSaveCustomerDiscount = async () => {
+    if (!discountModalCust) return;
+    setDiscountSaving(true);
+    try {
+      await updateCustomerDiscounts(discountModalCust.id, discountForm.discounts, discountForm.prices);
+      setDiscountSuccess(true);
+      setTimeout(() => {
+        setDiscountSuccess(false);
+        setDiscountModalCust(null);
+      }, 1200);
+    } catch (err) {
+      alert('Failed to save discounts: ' + (err.message || err));
+    } finally {
+      setDiscountSaving(false);
+    }
+  };
+
+  // ==================== BOTTLE STOCK ====================
   const updateCollectField = (cylType, field, val) => {
     setCollectForm(prev => ({
       ...prev,
@@ -107,8 +274,6 @@ export default function Customers() {
 
   const collectEmptyBottles = async () => {
     if (!balanceModalCustomer) return;
-    
-    // Merge collectForm into the existing emptyBottleStock
     const stock = balanceModalCustomer.emptyBottleStock || defaultEmptyStock();
     const updated = JSON.parse(JSON.stringify(stock));
     
@@ -153,7 +318,7 @@ export default function Customers() {
   };
 
   const getInvoiceBalance = (c) => {
-    const bal = c.bottleBalance || defaultBalance(); // Uses correct invoice balance structure
+    const bal = c.bottleBalance || defaultBalance();
     let totalFilled = 0;
     const perType = {};
     CYLINDER_TYPES.forEach(t => {
@@ -175,11 +340,83 @@ export default function Customers() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Customers</h1>
-          <p className="page-subtitle">{customers.length} total customers</p>
+          <p className="page-subtitle">{customers.length} total registered customers</p>
         </div>
         <div className="btn-group">
           <button className="btn btn-secondary" onClick={() => exportCustomersExcel(customers)}>📥 Export Excel</button>
-          <button className="btn btn-primary" onClick={openAdd}>➕ Add Customer</button>
+          {canEdit && <button className="btn btn-primary" onClick={openAdd}>➕ Add Customer</button>}
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* 🏷️ UPPER SECTION: PERMANENT LIVE MARKET PRICE BOARD        */}
+      {/* ========================================================= */}
+      <div className="card" style={{
+        background: 'linear-gradient(135deg, rgba(249,115,22,0.07) 0%, rgba(59,130,246,0.07) 100%)',
+        border: '1px solid rgba(249,115,22,0.35)',
+        borderRadius: 14,
+        padding: '20px 24px',
+        marginBottom: 24,
+        boxShadow: '0 4px 20px rgba(0,0,0,0.04)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginBottom: 16 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: '1.5rem' }}>🏷️</span>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                Permanent Market Price Board (Benchmark Rates)
+              </h2>
+              <span className="badge badge-primary" style={{ fontSize: '0.75rem', fontWeight: 700 }}>Admin Standard</span>
+            </div>
+            <p style={{ margin: '6px 0 0 0', fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+              Standard market reference prices set by admin. Customer prices are compared with these rates, and when updated, customer prices automatically adapt keeping their discount percentages.
+              {marketPricesMeta?.updatedAt && (
+                <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
+                  • Last updated: {new Date(marketPricesMeta.updatedAt).toLocaleDateString()} {new Date(marketPricesMeta.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </p>
+          </div>
+          {canEdit && (
+            <button
+              className="btn btn-primary"
+              onClick={openMarketModal}
+              style={{ fontWeight: 700, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 2px 12px rgba(249,115,22,0.35)' }}
+            >
+              ✏️ Update Market Price
+            </button>
+          )}
+        </div>
+
+        {/* 3 Cylinder Market Price Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 16 }}>
+          {CYLINDER_TYPES.map(type => (
+            <div
+              key={type}
+              style={{
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border)',
+                borderRadius: 12,
+                padding: '16px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: '1.8rem' }}>{CYL_ICONS[type]}</span>
+                <div>
+                  <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)', fontWeight: 600 }}>{type} Cylinder</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent)' }}>
+                    ₹{Number(marketPrices[type] || 0).toLocaleString('en-IN')}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span className="badge badge-info" style={{ fontSize: '0.72rem', fontWeight: 700 }}>Market Rate</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -200,6 +437,7 @@ export default function Customers() {
         </select>
       </div>
 
+      {/* Customers Table */}
       <div className="card">
         <div className="card-header">
           <span className="card-title">👥 Customer List ({filtered.length})</span>
@@ -212,14 +450,15 @@ export default function Customers() {
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Type</th>
-                <th>🟢 Filled Bottles Sold</th>
-                <th>🫙 Empty Bottles to Collect</th>
+                <th>💰 Prices & Discounts (vs Market)</th>
+                <th>🟢 Filled Sold</th>
+                <th>🫙 Empty Pending</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
+                <tr><td colSpan={8} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
               ) : filtered.map(c => {
                 const stock = getEmptyStock(c);
                 const invBal = getInvoiceBalance(c);
@@ -238,10 +477,71 @@ export default function Customers() {
                   
                 return (
                   <tr key={c.id}>
-                    <td className="text-muted" style={{ fontSize: '0.78rem' }}>{c.id}</td>
+                    <td className="text-muted" style={{ fontSize: '0.78rem' }}>{c.id.slice(0, 8)}</td>
                     <td className="fw-600">{c.name}</td>
                     <td>{c.phone}</td>
                     <td>{typeBadge(c.type)}</td>
+
+                    {/* 💰 Prices & Discount vs Market Rate */}
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 230 }}>
+                        {CYLINDER_TYPES.map(type => {
+                          const custPrice = c.prices?.[type] !== undefined ? Number(c.prices[type]) : Number(marketPrices[type] || 0);
+                          const mktPrice = Number(marketPrices[type]) || 0;
+                          const discountAmt = mktPrice - custPrice;
+                          const discountPct = mktPrice > 0 ? ((discountAmt / mktPrice) * 100) : 0;
+                          const isDiscounted = discountAmt > 0;
+                          const isEqual = discountAmt === 0;
+
+                          return (
+                            <div key={type} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: '0.8rem' }}>
+                              <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                {CYL_ICONS[type]} {type}:
+                              </span>
+                              <span style={{ fontWeight: 700, color: 'var(--accent)', marginLeft: 'auto', marginRight: 6 }}>
+                                ₹{custPrice}
+                              </span>
+                              {isDiscounted ? (
+                                <span
+                                  className="badge badge-success"
+                                  style={{ fontSize: '0.68rem', padding: '2px 6px', fontWeight: 700 }}
+                                  title={`Market: ₹${mktPrice} | Discount: ₹${discountAmt} (${discountPct.toFixed(1)}% OFF)`}
+                                >
+                                  -{discountPct.toFixed(0)}% (₹{discountAmt} off)
+                                </span>
+                              ) : isEqual ? (
+                                <span
+                                  className="badge badge-muted"
+                                  style={{ fontSize: '0.68rem', padding: '2px 6px' }}
+                                  title={`Sold at standard market rate: ₹${mktPrice}`}
+                                >
+                                  Market Rate
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge badge-warning"
+                                  style={{ fontSize: '0.68rem', padding: '2px 6px', fontWeight: 700 }}
+                                  title={`Higher than market (Market: ₹${mktPrice})`}
+                                >
+                                  +{Math.abs(discountPct).toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {canEdit && (
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '0.72rem', padding: '2px 8px', marginTop: 3, alignSelf: 'flex-start', borderRadius: 4 }}
+                            onClick={() => openDiscountModal(c)}
+                            title="Click to edit discounts & prices for this customer"
+                          >
+                            🏷️ Edit Discounts
+                          </button>
+                        )}
+                      </div>
+                    </td>
+
                     <td>
                       {hasFilledSold ? (
                         <div>
@@ -259,9 +559,9 @@ export default function Customers() {
                     <td>
                       {hasBottlesToCollect ? (
                         <div
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => openBalanceModal(c)}
-                          title={`Click to manage — ${breakdownTextStock}`}
+                          style={{ cursor: canEdit ? 'pointer' : 'default' }}
+                          onClick={() => canEdit && openBalanceModal(c)}
+                          title={`Bottle Balance — ${breakdownTextStock}`}
                         >
                           <span
                             className="badge badge-danger"
@@ -276,9 +576,9 @@ export default function Customers() {
                       ) : (
                         <span
                           className="badge badge-success"
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => openBalanceModal(c)}
-                          title="Click to manage bottle balance"
+                          style={{ cursor: canEdit ? 'pointer' : 'default' }}
+                          onClick={() => canEdit && openBalanceModal(c)}
+                          title="Bottle balance"
                         >
                           ✅ All collected
                         </span>
@@ -287,9 +587,13 @@ export default function Customers() {
                     <td>
                       <div className="btn-group">
                         <button className="btn btn-info btn-sm" onClick={() => openView(c)} title="View Ledger">👁 Details</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => openBalanceModal(c)} title="Manage Bottles">🫙</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => openEdit(c)}>✏️</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => setDeleteConfirm(c)}>🗑</button>
+                        {canEdit && (
+                          <>
+                            <button className="btn btn-secondary btn-sm" onClick={() => openBalanceModal(c)} title="Manage Bottles">🫙</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => openEdit(c)}>✏️</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => setDeleteConfirm(c)}>🗑</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -300,10 +604,182 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* ========================================================= */}
+      {/* 🏷️ MODAL 1: MARKET PRICE UPDATE MODAL                      */}
+      {/* ========================================================= */}
+      {marketModalOpen && (
+        <div className="modal-overlay" onClick={() => setMarketModalOpen(false)}>
+          <div className="modal" style={{ maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">🏷️ Update Permanent Market Prices</span>
+              <button className="modal-close" onClick={() => setMarketModalOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ padding: 12, background: 'rgba(59,130,246,0.08)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: 18 }}>
+                ℹ️ <strong>Permanent Market Rate:</strong> Set the benchmark market price for each cylinder type. This is saved permanently to the database.
+              </div>
+
+              {marketUpdateSuccess && (
+                <div style={{ padding: 12, background: 'rgba(34,197,94,0.1)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)', fontWeight: 700, fontSize: '0.9rem', marginBottom: 16, textAlign: 'center' }}>
+                  {marketUpdateSuccess}
+                </div>
+              )}
+
+              <div className="form-grid" style={{ marginBottom: 16 }}>
+                {CYLINDER_TYPES.map(type => (
+                  <div className="form-group" key={type}>
+                    <label className="form-label" style={{ fontWeight: 700 }}>
+                      {CYL_ICONS[type]} {type} Market Price (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      className="form-control"
+                      value={marketForm[type] || ''}
+                      onChange={e => setMarketForm(prev => ({ ...prev, [type]: Math.max(0, Number(e.target.value) || 0) }))}
+                      placeholder={`Current: ${marketPrices[type]}`}
+                      style={{ fontSize: '1.1rem', fontWeight: 700 }}
+                    />
+                    <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 3 }}>
+                      Current: ₹{marketPrices[type]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ padding: '12px 14px', background: 'rgba(249,115,22,0.08)', borderRadius: 8, border: '1px solid rgba(249,115,22,0.25)', marginBottom: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={autoUpdateCustPrices}
+                    onChange={e => setAutoUpdateCustPrices(e.target.checked)}
+                    style={{ marginTop: 3, width: 18, height: 18, accentColor: 'var(--accent)' }}
+                  />
+                  <div>
+                    <span style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Automatically recalculate all customer prices based on discount percentage
+                    </span>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                      When enabled, each customer's saved discount percentage (e.g. 10% OFF) is maintained against the new market rate, and their new prices are automatically saved to the database.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setMarketModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveMarketPrices} disabled={marketUpdateLoading}>
+                {marketUpdateLoading ? 'Saving...' : '💾 Save Market Prices'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 🏷️ MODAL 2: INDIVIDUAL CUSTOMER DISCOUNT & PRICE MODAL     */}
+      {/* ========================================================= */}
+      {discountModalCust && (
+        <div className="modal-overlay" onClick={() => setDiscountModalCust(null)}>
+          <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">🏷️ Customer Pricing & Discounts — {discountModalCust.name}</span>
+              <button className="modal-close" onClick={() => setDiscountModalCust(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ padding: 12, background: 'rgba(59,130,246,0.08)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+                💡 <strong>Dynamic Sync:</strong> You can edit either the <strong>Customer Price (₹)</strong>, <strong>Discount Percentage (%)</strong>, or <strong>Discount Amount (₹)</strong>. The other two calculate automatically and save to the database!
+              </div>
+
+              {discountSuccess && (
+                <div style={{ padding: 10, background: 'rgba(34,197,94,0.1)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)', fontWeight: 700, fontSize: '0.88rem', marginBottom: 14, textAlign: 'center' }}>
+                  ✅ Customer discounts and prices saved to database!
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {CYLINDER_TYPES.map(type => {
+                  const mkt = Number(marketPrices[type]) || 0;
+                  const curPrice = discountForm.prices[type] !== undefined ? discountForm.prices[type] : mkt;
+                  const curDiscountPct = discountForm.discounts[type] !== undefined ? discountForm.discounts[type] : 0;
+                  const curDiscountAmt = discountForm.discountAmounts[type] !== undefined ? discountForm.discountAmounts[type] : Math.max(0, mkt - curPrice);
+
+                  return (
+                    <div key={type} style={{ padding: 14, background: 'var(--bg-body)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {CYL_ICONS[type]} {type} Cylinder
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                          Market Price: <strong style={{ color: 'var(--accent)' }}>₹{mkt}</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curPrice}
+                            onChange={e => handleCustomerPriceChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>🏷️ Discount (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            className="form-control"
+                            value={curDiscountPct}
+                            onChange={e => handleCustomerDiscountPctChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem' }}>✂️ Discount Amount (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curDiscountAmt}
+                            onChange={e => handleCustomerDiscountAmtChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                        <span>Savings:</span>
+                        <span style={{ fontWeight: 600, color: curDiscountAmt > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {curDiscountAmt > 0 ? `Customer saves ₹${curDiscountAmt} (${curDiscountPct}%) per cylinder` : 'Standard market rate (0% discount)'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setDiscountModalCust(null)}>Close</button>
+              <button className="btn btn-primary" onClick={handleSaveCustomerDiscount} disabled={discountSaving}>
+                {discountSaving ? 'Saving...' : '💾 Save Customer Pricing'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 🏷️ MODAL 3: ADD / EDIT CUSTOMER MODAL                      */}
+      {/* ========================================================= */}
       {(modal === 'add' || modal === 'edit') && (
         <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">{modal === 'add' ? '➕ Add Customer' : '✏️ Edit Customer'}</span>
               <button className="modal-close" onClick={() => setModal(null)}>×</button>
@@ -332,17 +808,89 @@ export default function Customers() {
 
               <hr className="divider" />
               <div style={{ marginBottom: 12 }}>
-                <span className="fw-600" style={{ fontSize: '0.9rem' }}>💰 Individual Cylinder Prices</span>
-                <p className="form-hint mt-4">Set custom prices for this customer (used in invoices)</p>
+                <span className="fw-600" style={{ fontSize: '0.92rem' }}>💰 Cylinder Prices & Discount Compared with Market</span>
+                <p className="form-hint mt-4">Enter price, discount %, or discount amount — all synchronize automatically with permanent market prices.</p>
               </div>
-              <div className="form-grid">
-                {CYLINDER_TYPES.map(type => (
-                  <div className="form-group" key={type}>
-                    <label className="form-label">{type} Price (₹)</label>
-                    <input className="form-control" type="number" min="0" value={form.prices[type]}
-                      onChange={e => updatePrice(type, e.target.value)} />
-                  </div>
-                ))}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {CYLINDER_TYPES.map(type => {
+                  const mkt = Number(marketPrices[type]) || 0;
+                  const curPrice = form.prices?.[type] !== undefined ? form.prices[type] : mkt;
+                  const curDiscountPct = form.discounts?.[type] !== undefined ? form.discounts[type] : (mkt > 0 && curPrice < mkt ? Number((((mkt - curPrice) / mkt) * 100).toFixed(1)) : 0);
+                  const curDiscountAmt = Math.max(0, mkt - curPrice);
+
+                  return (
+                    <div key={type} style={{ padding: 12, background: 'var(--bg-body)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.86rem' }}>{CYL_ICONS[type]} {type} Cylinder</span>
+                        <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>Market Rate: ₹{mkt}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Price (₹)</label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={curPrice}
+                            onChange={e => {
+                              const p = Math.max(0, Number(e.target.value) || 0);
+                              const amt = mkt - p;
+                              const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+                              setForm(f => ({
+                                ...f,
+                                prices: { ...f.prices, [type]: p },
+                                discounts: { ...(f.discounts || {}), [type]: pct }
+                              }));
+                            }}
+                            style={{ fontWeight: 600 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Discount (%)</label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={curDiscountPct}
+                            onChange={e => {
+                              const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                              const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
+                              setForm(f => ({
+                                ...f,
+                                prices: { ...f.prices, [type]: p },
+                                discounts: { ...(f.discounts || {}), [type]: pct }
+                              }));
+                            }}
+                            style={{ fontWeight: 600 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Discount (₹)</label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={curDiscountAmt}
+                            onChange={e => {
+                              const amt = Math.max(0, Number(e.target.value) || 0);
+                              const p = Math.max(0, mkt - amt);
+                              const pct = mkt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+                              setForm(f => ({
+                                ...f,
+                                prices: { ...f.prices, [type]: p },
+                                discounts: { ...(f.discounts || {}), [type]: pct }
+                              }));
+                            }}
+                            style={{ fontWeight: 600 }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
             <div className="modal-footer">
@@ -353,7 +901,9 @@ export default function Customers() {
         </div>
       )}
 
-      {/* Bottle Balance Management Modal */}
+      {/* ========================================================= */}
+      {/* 🫙 MODAL 4: BOTTLE BALANCE MANAGEMENT MODAL               */}
+      {/* ========================================================= */}
       {balanceModalCustomer && (() => {
         const cust = balanceModalCustomer;
         const stock = cust.emptyBottleStock || defaultEmptyStock();
@@ -380,7 +930,7 @@ export default function Customers() {
                 </div>
               )}
 
-              {/* Current Balance — Read Only (LIVE from customers array) */}
+              {/* Current Balance */}
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                   <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📊 Current Pending Balance</span>
@@ -429,8 +979,6 @@ export default function Customers() {
                 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
                   {CYLINDER_TYPES.map(type => {
-                    const s = stock[type] || { withCustomer: 0, collected: 0 };
-                    const net = Math.max(0, s.withCustomer - s.collected);
                     return (
                       <div key={type} style={{ padding: 12, background: 'var(--bg-body)', borderRadius: 8, border: '1px solid var(--border)' }}>
                         <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 12, textAlign: 'center' }}>

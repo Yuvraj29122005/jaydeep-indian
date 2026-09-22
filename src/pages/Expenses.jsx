@@ -10,7 +10,8 @@ const emptyForm = {
 };
 
 export default function Expenses() {
-  const { expenses, addExpense, updateExpense, deleteExpense } = useApp();
+  const { expenses, addExpense, updateExpense, deleteExpense, canEditModule } = useApp();
+  const canEdit = canEditModule('expenses');
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('All');
   
@@ -86,7 +87,7 @@ export default function Expenses() {
           <p className="page-subtitle">Track agency expenses</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-primary" onClick={openAdd}>➕ Add Expense</button>
+          {canEdit && <button className="btn btn-primary" onClick={openAdd}>➕ Add Expense</button>}
         </div>
       </div>
 
@@ -153,10 +154,12 @@ export default function Expenses() {
                   <td>{e.description}</td>
                   <td className="fw-600 text-danger">₹{e.amount.toLocaleString('en-IN')}</td>
                   <td>
-                    <div className="btn-group">
-                      <button className="btn btn-secondary btn-sm" onClick={() => openEdit(e)}>✏️</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => setDeleteConfirm(e)}>🗑</button>
-                    </div>
+                    {canEdit && (
+                      <div className="btn-group">
+                        <button className="btn btn-secondary btn-sm" onClick={() => openEdit(e)}>✏️</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => setDeleteConfirm(e)}>🗑</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

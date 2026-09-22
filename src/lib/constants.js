@@ -21,3 +21,15 @@ export const defaultEmptyStock = () => ({
   '19kg': { withCustomer: 0, collected: 0 },
   '47.5kg': { withCustomer: 0, collected: 0 },
 });
+
+export const DEFAULT_MARKET_PRICES = {
+  '5kg': 500,
+  '19kg': 1000,
+  '47.5kg': 2300,
+};
+
+export const defaultCustomerDiscounts = () => ({
+  '5kg': 0,
+  '19kg': 0,
+  '47.5kg': 0,
+});

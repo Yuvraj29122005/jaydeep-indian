@@ -15,10 +15,21 @@ export default function Dashboard() {
     stock,
     customers,
     loading,
+    resetAllDataWithPin,
+    reloadData,
+    currentUser,
+    canEditModule,
   } = useApp();
   const navigate = useNavigate();
 
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+
+  // Reset Data state
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPin, setResetPin] = useState('');
+  const [resetStep, setResetStep] = useState('pin'); // 'pin' | 'confirm' | 'resetting' | 'success'
+  const [resetError, setResetError] = useState('');
+  const [pinShake, setPinShake] = useState(false);
 
   const dayInvoices = invoices.filter(i => i.date === selectedDate);
   const dayRevenue = dayInvoices.reduce((s, i) => s + i.totalAmount, 0);
@@ -65,6 +76,53 @@ export default function Dashboard() {
     return <span className="badge badge-danger">Unpaid</span>;
   };
 
+  // Reset Data handlers
+  const openResetModal = () => {
+    setShowResetModal(true);
+    setResetPin('');
+    setResetStep('pin');
+    setResetError('');
+    setPinShake(false);
+  };
+
+  const closeResetModal = () => {
+    setShowResetModal(false);
+    setResetPin('');
+    setResetStep('pin');
+    setResetError('');
+  };
+
+  const handlePinSubmit = () => {
+    if (resetPin === '2323') {
+      setResetStep('confirm');
+      setResetError('');
+    } else {
+      setResetError('Incorrect PIN! Please try again.');
+      setPinShake(true);
+      setTimeout(() => setPinShake(false), 600);
+      setResetPin('');
+    }
+  };
+
+  const handleConfirmReset = async () => {
+    setResetStep('resetting');
+    try {
+      await resetAllDataWithPin(resetPin);
+      setResetStep('success');
+      setTimeout(() => {
+        closeResetModal();
+        reloadData();
+      }, 2000);
+    } catch (err) {
+      setResetError('Failed to reset data: ' + err.message);
+      setResetStep('pin');
+    }
+  };
+
+  const handlePinKeyDown = (e) => {
+    if (e.key === 'Enter') handlePinSubmit();
+  };
+
   if (loading) {
     return (
       <div className="page">
@@ -92,13 +150,20 @@ export default function Dashboard() {
           <h1 className="page-title">Admin Dashboard</h1>
           <p className="page-subtitle">Jaydeep Indian Gas Agency · {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {currentUser?.role === 'admin' && (
+            <button className="btn btn-danger" onClick={openResetModal} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              ⚠️ Reset All Data
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={() => window.open('/', '_blank')}>
             🌐 Open Website
           </button>
-          <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>
-            ＋ New Billing Invoice
-          </button>
+          {canEditModule('invoices') && (
+            <button className="btn btn-primary" onClick={() => navigate('/invoices/new')}>
+              ＋ New Billing Invoice
+            </button>
+          )}
         </div>
       </div>
 
@@ -265,6 +330,93 @@ export default function Dashboard() {
           </table>
         </div>
       </div>
+
+      {/* Reset Data PIN Modal */}
+      {showResetModal && (
+        <div className="modal-overlay" onClick={closeResetModal}>
+          <div className="reset-modal" onClick={(e) => e.stopPropagation()}>
+            {resetStep === 'pin' && (
+              <>
+                <div className="reset-modal-header">
+                  <div className="reset-modal-icon reset-modal-icon-warning">🔐</div>
+                  <h2>PIN Verification Required</h2>
+                  <p className="reset-modal-desc">Enter your 4-digit security PIN to proceed with data reset</p>
+                </div>
+                <div className="reset-modal-body">
+                  <div className={`reset-pin-input-wrap ${pinShake ? 'pin-shake' : ''}`}>
+                    <input
+                      className={`reset-pin-input ${resetError ? 'reset-pin-error' : ''}`}
+                      type="password"
+                      maxLength={4}
+                      placeholder="● ● ● ●"
+                      value={resetPin}
+                      onChange={(e) => { setResetPin(e.target.value.replace(/\D/g, '')); setResetError(''); }}
+                      onKeyDown={handlePinKeyDown}
+                      autoFocus
+                    />
+                  </div>
+                  {resetError && (
+                    <div className="reset-error-msg">
+                      <span>❌</span> {resetError}
+                    </div>
+                  )}
+                </div>
+                <div className="reset-modal-footer">
+                  <button className="btn btn-secondary" onClick={closeResetModal}>Cancel</button>
+                  <button className="btn btn-danger" onClick={handlePinSubmit} disabled={resetPin.length < 4}>
+                    🔓 Verify PIN
+                  </button>
+                </div>
+              </>
+            )}
+
+            {resetStep === 'confirm' && (
+              <>
+                <div className="reset-modal-header">
+                  <div className="reset-modal-icon reset-modal-icon-danger">⚠️</div>
+                  <h2>Confirm Full Data Reset</h2>
+                  <p className="reset-modal-desc">This action will permanently delete:</p>
+                </div>
+                <div className="reset-modal-body">
+                  <div className="reset-items-list">
+                    <div className="reset-item">🗑️ All Customers ({customers.length})</div>
+                    <div className="reset-item">🗑️ All Invoices ({invoices.length})</div>
+                    <div className="reset-item">🗑️ All Expenses</div>
+                    <div className="reset-item">🗑️ All Refill Trips</div>
+                    <div className="reset-item">🗑️ All Personal Notes & Attachments</div>
+                    <div className="reset-item">🗑️ Stock Counts → Reset to 0</div>
+                  </div>
+                  <div className="reset-warning-box">
+                    ⚠️ <strong>This action cannot be undone!</strong> All data will be permanently erased from the database.
+                  </div>
+                </div>
+                <div className="reset-modal-footer">
+                  <button className="btn btn-secondary" onClick={closeResetModal}>Cancel</button>
+                  <button className="btn btn-danger" onClick={handleConfirmReset}>
+                    🗑️ Yes, Reset Everything
+                  </button>
+                </div>
+              </>
+            )}
+
+            {resetStep === 'resetting' && (
+              <div className="reset-modal-body" style={{ textAlign: 'center', padding: '48px 24px' }}>
+                <div className="reset-spinner"></div>
+                <h3 style={{ marginTop: 20, color: 'var(--text-primary)' }}>Resetting All Data...</h3>
+                <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Please wait while all data is being cleared</p>
+              </div>
+            )}
+
+            {resetStep === 'success' && (
+              <div className="reset-modal-body" style={{ textAlign: 'center', padding: '48px 24px' }}>
+                <div className="reset-modal-icon reset-modal-icon-success" style={{ margin: '0 auto 16px' }}>✅</div>
+                <h3 style={{ color: 'var(--success)' }}>Data Reset Complete!</h3>
+                <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>All data has been successfully cleared</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

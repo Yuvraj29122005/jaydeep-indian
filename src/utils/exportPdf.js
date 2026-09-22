@@ -61,28 +61,44 @@ export function exportInvoicePDF(invoice) {
   doc.text(addrLines, 14, 111);
 
   // Items table
-  const tableBody = invoice.items.map(item => [
-    item.cylinderType,
-    item.qty,
-    `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
-    `Rs. ${((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}`,
-    isEB ? '✓ Collected' : (item.emptyCollected ? '✓ Yes' : '✗ No'),
-  ]);
+  const tableHead = isEB
+    ? [['Cylinder', 'Empty Collected', 'Rate/Refund', 'Amount', 'Status']]
+    : [['Cylinder', 'Qty', 'Unit Price', 'Market Price', 'Discount', 'Amount', 'Empty']];
+
+  const tableBody = invoice.items.map(item => {
+    const mktPrice = item.marketPrice || item.unitPrice;
+    const discPct = mktPrice > 0 && item.unitPrice < mktPrice
+      ? `${(((mktPrice - item.unitPrice) / mktPrice) * 100).toFixed(1)}%`
+      : '0%';
+    const amt = (Number(item.qty) || 0) * (Number(item.unitPrice) || 0);
+
+    return isEB
+      ? [
+          item.cylinderType,
+          item.qty,
+          `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
+          `Rs. ${amt.toLocaleString('en-IN')}`,
+          '✓ Collected',
+        ]
+      : [
+          item.cylinderType,
+          item.qty,
+          `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
+          `Rs. ${(Number(mktPrice) || 0).toLocaleString('en-IN')}`,
+          discPct,
+          `Rs. ${amt.toLocaleString('en-IN')}`,
+          item.emptyCollected ? '✓ Yes' : '✗ No',
+        ];
+  });
 
   autoTable(doc, {
     startY: 125,
-    head: [[
-      'Cylinder',
-      isEB ? 'Empty Collected' : 'Qty',
-      isEB ? 'Rate/Refund' : 'Unit Price',
-      'Amount',
-      'Empty Collected'
-    ]],
+    head: tableHead,
     body: tableBody,
     theme: 'grid',
     headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    styles: { fontSize: 10, cellPadding: 4 },
+    styles: { fontSize: 9, cellPadding: 3.5 },
   });
 
   const finalY = doc.lastAutoTable.finalY + 10;
@@ -133,32 +149,45 @@ export function exportAllInvoicesPDF(invoices) {
   doc.setFont('helvetica', 'bold');
   doc.text('JAYDEEP INDIAN GAS AGENCY — All Invoices', 105, 20, { align: 'center' });
 
+  // Summary
+  const totalRev = invoices.reduce((s, i) => s + i.totalAmount, 0);
+  const totalPaid = invoices.reduce((s, i) => s + i.paidAmount, 0);
+  const totalDue = totalRev - totalPaid;
+
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Total Invoices: ${invoices.length}  |  Revenue: Rs. ${totalRev.toLocaleString('en-IN')}  |  Collected: Rs. ${totalPaid.toLocaleString('en-IN')}  |  Outstanding: Rs. ${totalDue.toLocaleString('en-IN')}`, 14, 38);
+
   const tableBody = invoices.map(inv => [
     inv.invoiceNumber,
+    inv.invoiceType === 'Empty Bottle' ? 'EB' : 'Refill',
     inv.date,
     inv.customerName,
+    inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
     `Rs. ${inv.totalAmount.toLocaleString('en-IN')}`,
     `Rs. ${inv.paidAmount.toLocaleString('en-IN')}`,
-    inv.paymentMode,
-    inv.deliveryStatus,
+    `Rs. ${(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}`,
     inv.paymentStatus,
   ]);
 
   autoTable(doc, {
-    startY: 38,
-    head: [['Invoice No', 'Date', 'Customer', 'Total', 'Paid', 'Mode', 'Delivery', 'Payment']],
+    startY: 44,
+    head: [['Invoice No', 'Type', 'Date', 'Customer', 'Items', 'Total', 'Paid', 'Balance', 'Status']],
     body: tableBody,
     theme: 'grid',
-    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold', fontSize: 8 },
-    styles: { fontSize: 7, cellPadding: 2 },
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold', fontSize: 7 },
+    styles: { fontSize: 6.5, cellPadding: 2 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
   });
 
   doc.save('JIG-All-Invoices.pdf');
 }
 
-export function exportCustomerReportPDF(customer, invoices) {
+export function exportCustomerReportPDF(customer, invoices, marketPrices) {
   const doc = new jsPDF();
+  const mkt = marketPrices || {};
+  const cylTypes = ['5kg', '19kg', '47.5kg'];
 
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 0, 210, 45, 'F');
@@ -177,8 +206,41 @@ export function exportCustomerReportPDF(customer, invoices) {
   doc.text(`Name: ${customer.name}`, 14, 34);
   doc.text(`Phone: ${customer.phone}`, 14, 40);
   doc.text(`Address: ${customer.address}`, 105, 34);
+  doc.text(`Type: ${customer.type || 'N/A'}`, 105, 40);
 
-  // Totals
+  // Price Comparison Table
+  const priceTableBody = cylTypes.map(t => {
+    const mktP = Number(mkt[t]) || 0;
+    const custP = customer.prices?.[t] !== undefined ? Number(customer.prices[t]) : mktP;
+    const discAmt = Math.max(0, mktP - custP);
+    const discPct = mktP > 0 ? ((discAmt / mktP) * 100).toFixed(1) : '0.0';
+    return [
+      t,
+      `Rs. ${mktP.toLocaleString('en-IN')}`,
+      `Rs. ${custP.toLocaleString('en-IN')}`,
+      `Rs. ${discAmt.toLocaleString('en-IN')}`,
+      `${discPct}%`
+    ];
+  });
+
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Pricing & Discount Comparison', 14, 53);
+
+  autoTable(doc, {
+    startY: 56,
+    head: [['Cylinder', 'Market Price', 'Customer Price', 'Discount (Rs)', 'Discount (%)']],
+    body: priceTableBody,
+    theme: 'grid',
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: 8, cellPadding: 3 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+  });
+
+  let curY = doc.lastAutoTable.finalY + 8;
+
+  // Financial Summary
   const totalBusiness = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
   const totalPaid = invoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
   const totalDue = totalBusiness - totalPaid;
@@ -186,27 +248,33 @@ export function exportCustomerReportPDF(customer, invoices) {
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Total Business: Rs. ${totalBusiness.toLocaleString('en-IN')}`, 14, 55);
-  doc.text(`Total Paid: Rs. ${totalPaid.toLocaleString('en-IN')}`, 80, 55);
+  doc.text(`Total Business: Rs. ${totalBusiness.toLocaleString('en-IN')}`, 14, curY);
+  doc.text(`Total Paid: Rs. ${totalPaid.toLocaleString('en-IN')}`, 80, curY);
   doc.setTextColor(220, 38, 38);
-  doc.text(`Balance Due: Rs. ${totalDue.toLocaleString('en-IN')}`, 145, 55);
+  doc.text(`Balance Due: Rs. ${totalDue.toLocaleString('en-IN')}`, 145, curY);
 
-  const tableBody = invoices.map(inv => [
-    inv.date,
-    inv.invoiceNumber,
-    inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
-    `Rs. ${inv.totalAmount.toLocaleString('en-IN')}`,
-    `Rs. ${inv.paidAmount.toLocaleString('en-IN')}`,
-    inv.paymentStatus,
-  ]);
+  // Transaction Table
+  const tableBody = invoices.map(inv => {
+    const isEB = inv.invoiceType === 'Empty Bottle';
+    return [
+      inv.date,
+      inv.invoiceNumber,
+      isEB ? 'EB' : 'Refill',
+      inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
+      `Rs. ${inv.totalAmount.toLocaleString('en-IN')}`,
+      `Rs. ${inv.paidAmount.toLocaleString('en-IN')}`,
+      `Rs. ${(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}`,
+      inv.paymentStatus,
+    ];
+  });
 
   autoTable(doc, {
-    startY: 65,
-    head: [['Date', 'Invoice No', 'Items', 'Amount', 'Paid', 'Status']],
+    startY: curY + 6,
+    head: [['Date', 'Invoice No', 'Type', 'Items', 'Amount', 'Paid', 'Balance', 'Status']],
     body: tableBody,
     theme: 'grid',
-    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold', fontSize: 9 },
-    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: 7, cellPadding: 2.5 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
   });
 

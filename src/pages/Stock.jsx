@@ -7,7 +7,8 @@ const CYL_ICONS = { '5kg': '🟡', '19kg': '🟠', '47.5kg': '🔴' };
 const CYL_DESC = { '5kg': 'Small Domestic', '19kg': 'Standard Commercial', '47.5kg': 'Industrial/Hotel' };
 
 export default function Stock() {
-  const { stock, addStockManual, updateStock } = useApp();
+  const { stock, addStockManual, updateStock, canEditModule } = useApp();
+  const canEdit = canEditModule('stock');
   const [activeTab, setActiveTab] = useState('overview');
   const [addModal, setAddModal] = useState(null); // cylinderType
   const [addForm, setAddForm] = useState({ filledAdd: '', emptyAdd: '' });
@@ -102,10 +103,12 @@ export default function Stock() {
                     </div>
                   </div>
 
-                  <div className="btn-group">
-                    <button className="btn btn-primary btn-sm" style={{ boxShadow: '0 4px 12px rgba(234, 88, 12, 0.25)' }} onClick={() => openAdd(type)}>➕ Add Stock</button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(s)}>✏️ Adjust</button>
-                  </div>
+                  {canEdit && (
+                    <div className="btn-group">
+                      <button className="btn btn-primary btn-sm" style={{ boxShadow: '0 4px 12px rgba(234, 88, 12, 0.25)' }} onClick={() => openAdd(type)}>➕ Add Stock</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(s)}>✏️ Adjust</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -189,7 +192,7 @@ export default function Stock() {
                         }
                       </td>
                       <td>
-                        <button className="btn btn-primary btn-sm" style={{ boxShadow: '0 2px 8px rgba(234, 88, 12, 0.2)' }} onClick={() => openAdd(type)}>➕ Add Filled</button>
+                        {canEdit && <button className="btn btn-primary btn-sm" style={{ boxShadow: '0 2px 8px rgba(234, 88, 12, 0.2)' }} onClick={() => openAdd(type)}>➕ Add Filled</button>}
                       </td>
                     </tr>
                   );
@@ -224,7 +227,7 @@ export default function Stock() {
                       <td className="text-muted">{CYL_DESC[type]}</td>
                       <td style={{ color: 'var(--danger)', fontWeight: 700, fontSize: '1.1rem' }}>{s.emptyCount}</td>
                       <td>
-                        <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(s)}>✏️ Update</button>
+                        {canEdit && <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(s)}>✏️ Update</button>}
                       </td>
                     </tr>
                   );

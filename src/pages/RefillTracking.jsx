@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 
 export default function RefillTracking() {
-  const { refillTrips, sendForRefill, returnFromRefill, stock } = useApp();
+  const { refillTrips, sendForRefill, returnFromRefill, stock, canEditModule } = useApp();
+  const canEdit = canEditModule('refill');
   const [sendModal, setSendModal] = useState(false);
   const [returnModal, setReturnModal] = useState(null); // active trip object
   const [sendForm, setSendForm] = useState({ cylinderType: '19kg', emptyCount: '' });
@@ -30,7 +31,7 @@ export default function RefillTracking() {
           <p className="page-subtitle">Track trucks sent to the plant for refilling empty bottles</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-primary" onClick={() => setSendModal(true)}>➕ Send Truck</button>
+          {canEdit && <button className="btn btn-primary" onClick={() => setSendModal(true)}>➕ Send Truck</button>}
         </div>
       </div>
 
@@ -71,7 +72,7 @@ export default function RefillTracking() {
                     )}
                   </td>
                   <td>
-                    {trip.status === 'Sent' && (
+                    {trip.status === 'Sent' && canEdit && (
                       <button className="btn btn-success btn-sm" onClick={() => { setReturnModal(trip); setReturnForm({ filledCount: trip.emptySentCount }); }}>
                         Mark Returned
                       </button>

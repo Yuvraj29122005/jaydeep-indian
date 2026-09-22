@@ -1,4 +1,86 @@
 import { supabase } from './supabase';
+import { CYLINDER_TYPES, DEFAULT_MARKET_PRICES } from './constants';
+
+// ==================== MARKET PRICES ====================
+
+const LOCAL_MARKET_KEY = 'jig_market_prices';
+const LOCAL_MARKET_META_KEY = 'jig_market_prices_meta';
+
+export async function fetchMarketPrices() {
+  try {
+    const { data, error } = await supabase
+      .from('market_prices')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    if (!error && data && data.length > 0) {
+      const row = data[0];
+      const prices = row.prices || DEFAULT_MARKET_PRICES;
+      const meta = {
+        updatedAt: row.updated_at,
+        updatedBy: row.updated_by || 'Admin'
+      };
+      try {
+        localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
+        localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify(meta));
+      } catch (_e) {}
+      return { prices, meta };
+    }
+  } catch (err) {
+    console.warn('Supabase fetchMarketPrices error, falling back:', err);
+  }
+
+  // Fallback to localStorage or defaults
+  try {
+    const saved = localStorage.getItem(LOCAL_MARKET_KEY);
+    const savedMeta = localStorage.getItem(LOCAL_MARKET_META_KEY);
+    if (saved) {
+      return {
+        prices: JSON.parse(saved),
+        meta: savedMeta ? JSON.parse(savedMeta) : { updatedAt: null, updatedBy: 'Admin' }
+      };
+    }
+  } catch (e) {
+    console.warn('LocalStorage error:', e);
+  }
+
+  return {
+    prices: DEFAULT_MARKET_PRICES,
+    meta: { updatedAt: null, updatedBy: 'Admin' }
+  };
+}
+
+export async function saveMarketPrices(prices, updatedBy = 'Admin') {
+  const timestamp = new Date().toISOString();
+  try {
+    localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
+    localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify({ updatedAt: timestamp, updatedBy }));
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('market_prices')
+      .insert({
+        prices,
+        updated_at: timestamp,
+        updated_by: updatedBy
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Supabase market_prices table insert error (run migration SQL):', error.message);
+    }
+    return {
+      prices: data?.prices || prices,
+      meta: { updatedAt: data?.updated_at || timestamp, updatedBy }
+    };
+  } catch (err) {
+    console.warn('Supabase saveMarketPrices table not available, saved locally:', err);
+    return { prices, meta: { updatedAt: timestamp, updatedBy } };
+  }
+}
 
 // ==================== CUSTOMERS ====================
 
@@ -31,7 +113,19 @@ export async function patchCustomer(id, updates) {
   if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
   if (updates.address !== undefined) dbUpdates.address = updates.address;
   if (updates.type !== undefined) dbUpdates.type = updates.type;
-  if (updates.prices !== undefined) dbUpdates.prices = updates.prices;
+
+  if (updates.prices !== undefined || updates.discounts !== undefined) {
+    const curPrices = current.prices || {};
+    const curDiscounts = curPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+    const newDiscounts = updates.discounts || updates.prices?.discounts || curDiscounts;
+
+    dbUpdates.prices = {
+      '5kg': updates.prices?.['5kg'] !== undefined ? Number(updates.prices['5kg']) : (Number(curPrices['5kg']) || 450),
+      '19kg': updates.prices?.['19kg'] !== undefined ? Number(updates.prices['19kg']) : (Number(curPrices['19kg']) || 950),
+      '47.5kg': updates.prices?.['47.5kg'] !== undefined ? Number(updates.prices['47.5kg']) : (Number(curPrices['47.5kg']) || 2200),
+      discounts: newDiscounts,
+    };
+  }
   
   if (updates.bottleBalance !== undefined || updates.emptyBottleStock !== undefined) {
     const currentBal = current.bottle_balance || {};
@@ -75,15 +169,79 @@ export async function removeCustomer(id) {
   if (error) throw error;
 }
 
+export async function updateAllCustomersWithNewMarketPrices(newMarketPrices, customers, oldMarketPrices = null) {
+  const updatedCustomers = [];
+  const oldMarket = oldMarketPrices || DEFAULT_MARKET_PRICES;
+
+  for (const c of customers) {
+    const custDiscounts = c.discounts || c.prices?.discounts || {};
+    const newPrices = {};
+    const newCustDiscounts = {};
+
+    CYLINDER_TYPES.forEach(type => {
+      const newMkt = Number(newMarketPrices[type]) || 0;
+      let discountPct = custDiscounts[type];
+
+      // If no stored discount %, determine from old price vs old market price
+      if (discountPct === undefined || discountPct === null) {
+        const oldPrice = Number(c.prices?.[type]) || 0;
+        const oldMktVal = Number(oldMarket[type]) || 0;
+        if (oldPrice > 0 && oldMktVal > 0 && oldPrice < oldMktVal) {
+          discountPct = Number((((oldMktVal - oldPrice) / oldMktVal) * 100).toFixed(2));
+        } else {
+          discountPct = 0;
+        }
+      }
+
+      discountPct = Math.max(0, Math.min(100, Number(discountPct) || 0));
+      newCustDiscounts[type] = discountPct;
+
+      if (discountPct > 0) {
+        newPrices[type] = Math.max(0, Math.round(newMkt * (1 - discountPct / 100)));
+      } else {
+        newPrices[type] = newMkt;
+      }
+    });
+
+    try {
+      const patched = await patchCustomer(c.id, {
+        prices: {
+          ...newPrices,
+          discounts: newCustDiscounts,
+        },
+        discounts: newCustDiscounts,
+      });
+      updatedCustomers.push(patched);
+    } catch (err) {
+      console.error(`Failed to auto-update prices for customer ${c.name} (${c.id}):`, err);
+      updatedCustomers.push({
+        ...c,
+        prices: { ...newPrices, discounts: newCustDiscounts },
+        discounts: newCustDiscounts,
+      });
+    }
+  }
+  return updatedCustomers;
+}
+
 function mapCustomerFromDB(row) {
   const bal = row.bottle_balance || {};
+  const rawPrices = row.prices || {};
+  const discounts = rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+
   return {
     id: row.id,
     name: row.name || '',
     phone: row.phone || '',
     address: row.address || '',
     type: row.type || 'Domestic',
-    prices: row.prices || { '5kg': 450, '19kg': 950, '47.5kg': 2200 },
+    prices: {
+      '5kg': Number(rawPrices['5kg']) || 450,
+      '19kg': Number(rawPrices['19kg']) || 950,
+      '47.5kg': Number(rawPrices['47.5kg']) || 2200,
+      discounts: discounts,
+    },
+    discounts: discounts,
     bottleBalance: {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0 },
       '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0 },
@@ -100,12 +258,20 @@ function mapCustomerFromDB(row) {
 function mapCustomerToDB(customer) {
   const bal = customer.bottleBalance || {};
   const stock = customer.emptyBottleStock || {};
+  const rawPrices = customer.prices || {};
+  const discounts = customer.discounts || rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+
   return {
     name: customer.name,
     phone: customer.phone,
     address: customer.address || '',
     type: customer.type || 'Domestic',
-    prices: customer.prices || { '5kg': 450, '19kg': 950, '47.5kg': 2200 },
+    prices: {
+      '5kg': Number(rawPrices['5kg']) || 450,
+      '19kg': Number(rawPrices['19kg']) || 950,
+      '47.5kg': Number(rawPrices['47.5kg']) || 2200,
+      discounts: discounts,
+    },
     bottle_balance: {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0, stock: stock['5kg'] || { withCustomer: 0, collected: 0 } },
       '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0, stock: stock['19kg'] || { withCustomer: 0, collected: 0 } },
@@ -396,6 +562,519 @@ function mapRefillTripFromDB(row) {
     status: row.status,
     dateSent: row.date_sent,
     dateReturned: row.date_returned,
+  };
+}
+
+// ==================== PERSONAL NOTES ====================
+
+const LOCAL_NOTES_KEY = 'jig_personal_notes';
+
+export async function fetchNotes() {
+  try {
+    const { data, error } = await supabase
+      .from('personal_notes')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (!error && data) {
+      const notes = data.map(mapNoteFromDB);
+      try {
+        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(notes));
+      } catch (_e) {}
+      return notes;
+    }
+  } catch (err) {
+    console.warn('Supabase fetchNotes error, falling back to local storage:', err);
+  }
+
+  // Fallback to localStorage
+  try {
+    const saved = localStorage.getItem(LOCAL_NOTES_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.warn('LocalStorage notes read error:', e);
+  }
+  return [];
+}
+
+export async function insertNote(note) {
+  const dbNote = {
+    date: note.date,
+    title: note.title,
+    content: note.content,
+    attachments: note.attachments || [],
+  };
+
+  let localNotes = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    if (raw) localNotes = JSON.parse(raw);
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('personal_notes')
+      .insert(dbNote)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const created = mapNoteFromDB(data);
+      localNotes = [created, ...localNotes.filter(n => n.id !== created.id)];
+      try {
+        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+      } catch (_e) {}
+      return created;
+    }
+  } catch (err) {
+    console.warn('Supabase insertNote error, saving locally:', err);
+  }
+
+  // Local fallback save
+  const createdLocal = {
+    ...dbNote,
+    id: 'note_' + Date.now(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  localNotes = [createdLocal, ...localNotes];
+  try {
+    localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+  } catch (_e) {}
+  return createdLocal;
+}
+
+export async function patchNote(id, updates) {
+  const dbUpdates = {};
+  if (updates.date !== undefined) dbUpdates.date = updates.date;
+  if (updates.title !== undefined) dbUpdates.title = updates.title;
+  if (updates.content !== undefined) dbUpdates.content = updates.content;
+  if (updates.attachments !== undefined) dbUpdates.attachments = updates.attachments;
+  dbUpdates.updated_at = new Date().toISOString();
+
+  let localNotes = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    if (raw) localNotes = JSON.parse(raw);
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('personal_notes')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const updated = mapNoteFromDB(data);
+      localNotes = localNotes.map(n => n.id === id ? updated : n);
+      try {
+        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+      } catch (_e) {}
+      return updated;
+    }
+  } catch (err) {
+    console.warn('Supabase patchNote error, updating locally:', err);
+  }
+
+  // Local fallback update
+  localNotes = localNotes.map(n => {
+    if (n.id === id) {
+      return { ...n, ...updates, updatedAt: new Date().toISOString() };
+    }
+    return n;
+  });
+  try {
+    localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+  } catch (_e) {}
+  return localNotes.find(n => n.id === id) || { id, ...updates };
+}
+
+export async function removeNote(id) {
+  // First try cleanup from storage
+  try {
+    const { data: note } = await supabase
+      .from('personal_notes')
+      .select('attachments')
+      .eq('id', id)
+      .single();
+
+    if (note?.attachments?.length > 0) {
+      const paths = note.attachments.map(a => a.storagePath).filter(Boolean);
+      if (paths.length > 0) {
+        await supabase.storage.from('note-attachments').remove(paths);
+      }
+    }
+  } catch (_e) {}
+
+  try {
+    await supabase.from('personal_notes').delete().eq('id', id);
+  } catch (err) {
+    console.warn('Supabase removeNote error:', err);
+  }
+
+  try {
+    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    if (raw) {
+      const filtered = JSON.parse(raw).filter(n => n.id !== id);
+      localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(filtered));
+    }
+  } catch (_e) {}
+}
+
+function mapNoteFromDB(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    title: row.title || '',
+    content: row.content || '',
+    attachments: row.attachments || [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// ==================== FILE ATTACHMENTS ====================
+
+export async function uploadNoteAttachment(file) {
+  const timestamp = Date.now();
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = `${timestamp}_${safeName}`;
+
+  try {
+    const { error } = await supabase.storage
+      .from('note-attachments')
+      .upload(filePath, file);
+
+    if (!error) {
+      const { data: urlData } = supabase.storage
+        .from('note-attachments')
+        .getPublicUrl(filePath);
+
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        storagePath: filePath,
+        url: urlData.publicUrl,
+      };
+    }
+  } catch (err) {
+    console.warn('Supabase storage upload error, falling back to data URL:', err);
+  }
+
+  // Fallback to Base64 Data URL so user can still preview & download locally
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        storagePath: null,
+        url: reader.result,
+      });
+    };
+    reader.onerror = (e) => reject(new Error('File reading failed: ' + e));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function deleteNoteAttachment(storagePath) {
+  if (!storagePath) return;
+  try {
+    await supabase.storage.from('note-attachments').remove([storagePath]);
+  } catch (err) {
+    console.warn('Supabase storage delete error:', err);
+  }
+}
+
+// ==================== RESET ALL DATA ====================
+
+export async function resetAllData() {
+  // Delete all rows from every table that exists in database
+  const tables = ['invoices', 'expenses', 'refill_trips', 'personal_notes', 'customers'];
+
+  for (const table of tables) {
+    try {
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error && error.code !== 'PGRST205') {
+        console.warn(`Warning clearing ${table}:`, error.message);
+      }
+    } catch (e) {
+      console.warn(`Exception clearing ${table}:`, e);
+    }
+  }
+
+  // Reset stock counts to 0 in Supabase
+  try {
+    const { data: stockRows } = await supabase.from('stock').select('id');
+    if (stockRows) {
+      for (const row of stockRows) {
+        await supabase
+          .from('stock')
+          .update({ filled_count: 0, empty_count: 0 })
+          .eq('id', row.id);
+      }
+    }
+  } catch (e) {
+    console.warn('Exception resetting stock in DB:', e);
+  }
+
+  // Clean up all files from note-attachments storage bucket
+  try {
+    const { data: files } = await supabase.storage
+      .from('note-attachments')
+      .list('', { limit: 1000 });
+    if (files && files.length > 0) {
+      const paths = files.map(f => f.name);
+      await supabase.storage.from('note-attachments').remove(paths);
+    }
+  } catch (_e) {
+    console.warn('Could not clean storage:', _e);
+  }
+
+  // Clean up all local storage data backups
+  try {
+    localStorage.removeItem(LOCAL_NOTES_KEY);
+    localStorage.removeItem('jig_market_prices');
+    localStorage.removeItem('jig_market_prices_meta');
+  } catch (_e) {}
+}
+
+// ==================== APP USERS & AUTH ====================
+
+const LOCAL_USERS_KEY = 'jig_app_users';
+
+export const SUPER_ADMIN_USER = {
+  id: 'super-admin-01',
+  username: 'admin',
+  email: 'jaydeepindian01@gmail.com',
+  name: 'Super Admin',
+  role: 'admin',
+  permissions: {
+    dashboard: 'full',
+    customers: 'edit',
+    invoices: 'edit',
+    stock: 'edit',
+    refill: 'edit',
+    reports: 'view',
+    expenses: 'edit',
+    notes: 'edit',
+    users: 'edit',
+  },
+  status: 'active',
+};
+
+export async function fetchAppUsers() {
+  try {
+    const { data, error } = await supabase
+      .from('app_users')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      const users = data.map(mapUserFromDB);
+      try {
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+      } catch (_e) {}
+      return users;
+    }
+  } catch (err) {
+    console.warn('Supabase fetchAppUsers error, using fallback:', err);
+  }
+
+  // Fallback to localStorage
+  try {
+    const local = localStorage.getItem(LOCAL_USERS_KEY);
+    if (local) return JSON.parse(local);
+  } catch (_e) {}
+
+  return [];
+}
+
+export async function insertAppUser(user) {
+  const newUser = {
+    username: user.username.trim().toLowerCase(),
+    password: user.password,
+    name: user.name || user.username,
+    role: user.role || 'staff',
+    permissions: user.permissions || {},
+    status: user.status || 'active',
+  };
+
+  // Local storage backup
+  let localUsers = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (raw) localUsers = JSON.parse(raw);
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('app_users')
+      .insert(newUser)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const created = mapUserFromDB(data);
+      localUsers = [created, ...localUsers.filter(u => u.id !== created.id)];
+      try {
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(localUsers));
+      } catch (_e) {}
+      return created;
+    }
+  } catch (err) {
+    console.warn('Supabase insertAppUser error, saving locally:', err);
+  }
+
+  // Fallback local save
+  const createdLocal = {
+    ...newUser,
+    id: 'user_' + Date.now(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  localUsers = [createdLocal, ...localUsers];
+  try {
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(localUsers));
+  } catch (_e) {}
+  return createdLocal;
+}
+
+export async function patchAppUser(id, updates) {
+  const dbUpdates = {};
+  if (updates.name !== undefined) dbUpdates.name = updates.name;
+  if (updates.password !== undefined && updates.password) dbUpdates.password = updates.password;
+  if (updates.role !== undefined) dbUpdates.role = updates.role;
+  if (updates.permissions !== undefined) dbUpdates.permissions = updates.permissions;
+  if (updates.status !== undefined) dbUpdates.status = updates.status;
+  dbUpdates.updated_at = new Date().toISOString();
+
+  // Local storage update
+  let localUsers = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (raw) localUsers = JSON.parse(raw);
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('app_users')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (!error && data) {
+      const updated = mapUserFromDB(data);
+      localUsers = localUsers.map(u => u.id === id ? updated : u);
+      try {
+        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(localUsers));
+      } catch (_e) {}
+      return updated;
+    }
+  } catch (err) {
+    console.warn('Supabase patchAppUser error, updating locally:', err);
+  }
+
+  // Fallback local
+  localUsers = localUsers.map(u => {
+    if (u.id === id) {
+      return { ...u, ...updates, updatedAt: new Date().toISOString() };
+    }
+    return u;
+  });
+  try {
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(localUsers));
+  } catch (_e) {}
+  return localUsers.find(u => u.id === id);
+}
+
+export async function removeAppUser(id) {
+  try {
+    await supabase.from('app_users').delete().eq('id', id);
+  } catch (err) {
+    console.warn('Supabase removeAppUser error:', err);
+  }
+
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (raw) {
+      const users = JSON.parse(raw).filter(u => u.id !== id);
+      localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+    }
+  } catch (_e) {}
+}
+
+export async function authenticateUser(identifier, password) {
+  const cleanId = (identifier || '').trim().toLowerCase();
+  const cleanPw = (password || '').trim();
+
+  // 1. Check Super Admin
+  if (
+    (cleanId === 'jaydeepindian01@gmail.com' || cleanId === 'admin') &&
+    cleanPw === 'Jaydeep@1234'
+  ) {
+    return SUPER_ADMIN_USER;
+  }
+
+  // 2. Check Database users
+  try {
+    const { data, error } = await supabase
+      .from('app_users')
+      .select('*')
+      .eq('username', cleanId)
+      .eq('password', cleanPw)
+      .single();
+
+    if (!error && data) {
+      if (data.status === 'inactive') {
+        throw new Error('ACCOUNT_INACTIVE');
+      }
+      return mapUserFromDB(data);
+    }
+  } catch (err) {
+    if (err.message === 'ACCOUNT_INACTIVE') throw err;
+    console.warn('Supabase authenticateUser error, checking local users:', err);
+  }
+
+  // 3. Check Local Storage fallback
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (raw) {
+      const users = JSON.parse(raw);
+      const match = users.find(u => u.username?.toLowerCase() === cleanId && u.password === cleanPw);
+      if (match) {
+        if (match.status === 'inactive') {
+          throw new Error('ACCOUNT_INACTIVE');
+        }
+        return match;
+      }
+    }
+  } catch (err) {
+    if (err.message === 'ACCOUNT_INACTIVE') throw err;
+  }
+
+  return null;
+}
+
+function mapUserFromDB(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    password: row.password,
+    name: row.name || row.username,
+    role: row.role || 'staff',
+    permissions: row.permissions || {},
+    status: row.status || 'active',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
