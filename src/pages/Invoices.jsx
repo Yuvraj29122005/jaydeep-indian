@@ -11,7 +11,7 @@ const payBadge = (status) => {
 };
 
 export default function Invoices() {
-  const { invoices, canEditModule } = useApp();
+  const { invoices, canEditModule, agencySettings } = useApp();
   const navigate = useNavigate();
   const canEdit = canEditModule('invoices');
   const [search, setSearch] = useState('');
@@ -59,8 +59,8 @@ export default function Invoices() {
           <p className="page-subtitle">{invoices.length} total invoices · {filtered.length} shown</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(invoices)}>📥 Excel</button>
-          <button className="btn btn-secondary" onClick={() => exportAllInvoicesPDF(invoices)}>📄 PDF</button>
+          <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(invoices, agencySettings)}>📥 Excel</button>
+          <button className="btn btn-secondary" onClick={() => exportAllInvoicesPDF(invoices, agencySettings)}>📄 PDF</button>
           {canEdit && (
             <>
               <button className="btn btn-info" onClick={() => navigate('/invoices/new?type=empty')}>🫙 Empty Bottle Invoice</button>

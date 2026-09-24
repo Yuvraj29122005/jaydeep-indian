@@ -19,6 +19,7 @@ export default function Dashboard() {
     reloadData,
     currentUser,
     canEditModule,
+    agencySettings,
   } = useApp();
   const navigate = useNavigate();
 
@@ -148,7 +149,7 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Admin Dashboard</h1>
-          <p className="page-subtitle">Jaydeep Indian Gas Agency · {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <p className="page-subtitle">{agencySettings?.agencyName || 'Jaydeep Indian Gas Agency'} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {currentUser?.role === 'admin' && (
@@ -189,7 +190,7 @@ export default function Dashboard() {
               <div className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>Pending Collection</div>
               <div className="text-danger fw-800" style={{ fontSize: '1.3rem' }}>₹{dayOutstanding.toLocaleString('en-IN')}</div>
             </div>
-            <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(dayInvoices)}>
+            <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(dayInvoices, agencySettings)}>
               📥 Export Day Report
             </button>
           </div>

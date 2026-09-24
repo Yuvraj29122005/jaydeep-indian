@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { CYLINDER_TYPES, DEFAULT_MARKET_PRICES } from './constants';
+import { CYLINDER_TYPES, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS } from './constants';
 
 // ==================== MARKET PRICES ====================
 
@@ -79,6 +79,179 @@ export async function saveMarketPrices(prices, updatedBy = 'Admin') {
   } catch (err) {
     console.warn('Supabase saveMarketPrices table not available, saved locally:', err);
     return { prices, meta: { updatedAt: timestamp, updatedBy } };
+  }
+}
+
+// ==================== AGENCY SETTINGS & CONFIG ====================
+
+const LOCAL_AGENCY_SETTINGS_KEY = 'jig_agency_settings';
+
+export function mapAgencySettingsFromDB(row) {
+  if (!row) return DEFAULT_AGENCY_SETTINGS;
+  return {
+    id: row.id,
+    agencyName: row.agency_name || DEFAULT_AGENCY_SETTINGS.agencyName,
+    companyName: row.company_name || row.agency_name || DEFAULT_AGENCY_SETTINGS.companyName,
+    tagline: row.tagline !== undefined ? row.tagline : DEFAULT_AGENCY_SETTINGS.tagline,
+    gstin: row.gstin !== undefined ? row.gstin : DEFAULT_AGENCY_SETTINGS.gstin,
+    panNumber: row.pan_number !== undefined ? row.pan_number : DEFAULT_AGENCY_SETTINGS.panNumber,
+    phone: row.phone !== undefined ? row.phone : DEFAULT_AGENCY_SETTINGS.phone,
+    alternatePhone: row.alternate_phone !== undefined ? row.alternate_phone : DEFAULT_AGENCY_SETTINGS.alternatePhone,
+    email: row.email !== undefined ? row.email : DEFAULT_AGENCY_SETTINGS.email,
+    website: row.website !== undefined ? row.website : DEFAULT_AGENCY_SETTINGS.website,
+    address: row.address !== undefined ? row.address : DEFAULT_AGENCY_SETTINGS.address,
+    city: row.city !== undefined ? row.city : DEFAULT_AGENCY_SETTINGS.city,
+    state: row.state !== undefined ? row.state : DEFAULT_AGENCY_SETTINGS.state,
+    pincode: row.pincode !== undefined ? row.pincode : DEFAULT_AGENCY_SETTINGS.pincode,
+    bankName: row.bank_name !== undefined ? row.bank_name : DEFAULT_AGENCY_SETTINGS.bankName,
+    accountHolder: row.account_holder !== undefined ? row.account_holder : DEFAULT_AGENCY_SETTINGS.accountHolder,
+    accountNumber: row.account_number !== undefined ? row.account_number : DEFAULT_AGENCY_SETTINGS.accountNumber,
+    ifscCode: row.ifsc_code !== undefined ? row.ifsc_code : DEFAULT_AGENCY_SETTINGS.ifscCode,
+    branch: row.branch !== undefined ? row.branch : DEFAULT_AGENCY_SETTINGS.branch,
+    upiId: row.upi_id !== undefined ? row.upi_id : DEFAULT_AGENCY_SETTINGS.upiId,
+    invoicePrefix: row.invoice_prefix || DEFAULT_AGENCY_SETTINGS.invoicePrefix,
+    emptyBottlePrefix: row.empty_bottle_prefix || DEFAULT_AGENCY_SETTINGS.emptyBottlePrefix,
+    invoiceTerms: row.invoice_terms !== undefined ? row.invoice_terms : DEFAULT_AGENCY_SETTINGS.invoiceTerms,
+    invoiceFooterNote: row.invoice_footer_note !== undefined ? row.invoice_footer_note : DEFAULT_AGENCY_SETTINGS.invoiceFooterNote,
+    signatoryTitle: row.signatory_title !== undefined ? row.signatory_title : DEFAULT_AGENCY_SETTINGS.signatoryTitle,
+    updatedAt: row.updated_at || null,
+    updatedBy: row.updated_by || 'Admin'
+  };
+}
+
+export function mapAgencySettingsToDB(settings, updatedBy = 'Admin') {
+  return {
+    agency_name: settings.agencyName || DEFAULT_AGENCY_SETTINGS.agencyName,
+    company_name: settings.companyName || settings.agencyName || DEFAULT_AGENCY_SETTINGS.companyName,
+    tagline: settings.tagline !== undefined ? settings.tagline : DEFAULT_AGENCY_SETTINGS.tagline,
+    gstin: settings.gstin !== undefined ? settings.gstin : DEFAULT_AGENCY_SETTINGS.gstin,
+    pan_number: settings.panNumber !== undefined ? settings.panNumber : DEFAULT_AGENCY_SETTINGS.panNumber,
+    phone: settings.phone !== undefined ? settings.phone : DEFAULT_AGENCY_SETTINGS.phone,
+    alternate_phone: settings.alternatePhone !== undefined ? settings.alternatePhone : DEFAULT_AGENCY_SETTINGS.alternatePhone,
+    email: settings.email !== undefined ? settings.email : DEFAULT_AGENCY_SETTINGS.email,
+    website: settings.website !== undefined ? settings.website : DEFAULT_AGENCY_SETTINGS.website,
+    address: settings.address !== undefined ? settings.address : DEFAULT_AGENCY_SETTINGS.address,
+    city: settings.city !== undefined ? settings.city : DEFAULT_AGENCY_SETTINGS.city,
+    state: settings.state !== undefined ? settings.state : DEFAULT_AGENCY_SETTINGS.state,
+    pincode: settings.pincode !== undefined ? settings.pincode : DEFAULT_AGENCY_SETTINGS.pincode,
+    bank_name: settings.bankName !== undefined ? settings.bankName : DEFAULT_AGENCY_SETTINGS.bankName,
+    account_holder: settings.accountHolder !== undefined ? settings.accountHolder : DEFAULT_AGENCY_SETTINGS.accountHolder,
+    account_number: settings.accountNumber !== undefined ? settings.accountNumber : DEFAULT_AGENCY_SETTINGS.accountNumber,
+    ifsc_code: settings.ifscCode !== undefined ? settings.ifscCode : DEFAULT_AGENCY_SETTINGS.ifscCode,
+    branch: settings.branch !== undefined ? settings.branch : DEFAULT_AGENCY_SETTINGS.branch,
+    upi_id: settings.upiId !== undefined ? settings.upiId : DEFAULT_AGENCY_SETTINGS.upiId,
+    invoice_prefix: settings.invoicePrefix || DEFAULT_AGENCY_SETTINGS.invoicePrefix,
+    empty_bottle_prefix: settings.emptyBottlePrefix || DEFAULT_AGENCY_SETTINGS.emptyBottlePrefix,
+    invoice_terms: settings.invoiceTerms !== undefined ? settings.invoiceTerms : DEFAULT_AGENCY_SETTINGS.invoiceTerms,
+    invoice_footer_note: settings.invoiceFooterNote !== undefined ? settings.invoiceFooterNote : DEFAULT_AGENCY_SETTINGS.invoiceFooterNote,
+    signatory_title: settings.signatoryTitle !== undefined ? settings.signatoryTitle : DEFAULT_AGENCY_SETTINGS.signatoryTitle,
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy
+  };
+}
+
+export async function fetchAgencySettings() {
+  try {
+    const { data, error } = await supabase
+      .from('agency_settings')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    if (!error && data && data.length > 0) {
+      const settings = mapAgencySettingsFromDB(data[0]);
+      try {
+        localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(settings));
+      } catch (_e) {}
+      return { settings, syncedWithSupabase: true };
+    }
+  } catch (err) {
+    console.warn('Supabase fetchAgencySettings error, falling back:', err);
+  }
+
+  // Fallback to localStorage or defaults
+  try {
+    const saved = localStorage.getItem(LOCAL_AGENCY_SETTINGS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        settings: { ...DEFAULT_AGENCY_SETTINGS, ...parsed },
+        syncedWithSupabase: false
+      };
+    }
+  } catch (e) {
+    console.warn('LocalStorage agency settings read error:', e);
+  }
+
+  return {
+    settings: { ...DEFAULT_AGENCY_SETTINGS },
+    syncedWithSupabase: false
+  };
+}
+
+export async function saveAgencySettings(settings, updatedBy = 'Admin') {
+  const timestamp = new Date().toISOString();
+  const mergedSettings = {
+    ...DEFAULT_AGENCY_SETTINGS,
+    ...settings,
+    updatedAt: timestamp,
+    updatedBy
+  };
+
+  // Always save locally immediately
+  try {
+    localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(mergedSettings));
+  } catch (_e) {}
+
+  // Attempt database sync
+  try {
+    const dbPayload = mapAgencySettingsToDB(mergedSettings, updatedBy);
+
+    const { data: existingRows, error: selectErr } = await supabase
+      .from('agency_settings')
+      .select('id')
+      .limit(1);
+
+    if (selectErr) {
+      throw selectErr;
+    }
+
+    let savedData = null;
+    if (existingRows && existingRows.length > 0) {
+      const { data, error } = await supabase
+        .from('agency_settings')
+        .update(dbPayload)
+        .eq('id', existingRows[0].id)
+        .select()
+        .single();
+      if (error) throw error;
+      savedData = data;
+    } else {
+      const { data, error } = await supabase
+        .from('agency_settings')
+        .insert(dbPayload)
+        .select()
+        .single();
+      if (error) throw error;
+      savedData = data;
+    }
+
+    const finalSettings = mapAgencySettingsFromDB(savedData);
+    try {
+      localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(finalSettings));
+    } catch (_e) {}
+
+    return {
+      settings: finalSettings,
+      syncedWithSupabase: true
+    };
+  } catch (err) {
+    console.warn('Supabase saveAgencySettings note (run migration SQL if table missing):', err.message || err);
+    return {
+      settings: mergedSettings,
+      syncedWithSupabase: false,
+      error: err.message
+    };
   }
 }
 

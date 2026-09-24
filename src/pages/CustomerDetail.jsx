@@ -16,7 +16,7 @@ const payBadge = (status) => {
 export default function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { customers, invoices, marketPrices, updateCustomerDiscounts, canEditModule } = useApp();
+  const { customers, invoices, marketPrices, updateCustomerDiscounts, canEditModule, agencySettings } = useApp();
   const canEdit = canEditModule('customers');
 
   const customer = customers.find(c => c.id === id);
@@ -165,10 +165,10 @@ export default function CustomerDetail() {
               </button>
             </>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportPDF(customer, customerInvoices)}>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportPDF(customer, customerInvoices, marketPrices, agencySettings)}>
             📄 Statement (PDF)
           </button>
-          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportExcel(customer, customerInvoices)}>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportCustomerReportExcel(customer, customerInvoices, marketPrices, agencySettings)}>
             📥 Statement (Excel)
           </button>
         </div>

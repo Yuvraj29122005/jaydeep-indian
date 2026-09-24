@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as db from '../lib/database';
-import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock, DEFAULT_MARKET_PRICES } from '../lib/constants';
+import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS } from '../lib/constants';
 
 const AppContext = createContext();
 
@@ -28,6 +28,14 @@ export function AppProvider({ children }) {
   const [notes, setNotes] = useState([]);
   const [marketPrices, setMarketPrices] = useState(DEFAULT_MARKET_PRICES);
   const [marketPricesMeta, setMarketPricesMeta] = useState({ updatedAt: null, updatedBy: 'Admin' });
+  const [agencySettings, setAgencySettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('jig_agency_settings');
+      if (saved) return { ...DEFAULT_AGENCY_SETTINGS, ...JSON.parse(saved) };
+    } catch (_e) {}
+    return DEFAULT_AGENCY_SETTINGS;
+  });
+  const [agencySettingsMeta, setAgencySettingsMeta] = useState({ syncedWithSupabase: false });
   const [appUsers, setAppUsers] = useState([]);
 
   // Loading & error states
@@ -59,6 +67,7 @@ export function AppProvider({ children }) {
         refillTripsData,
         notesData,
         marketData,
+        agencyData,
         usersData,
       ] = await Promise.all([
         db.fetchCustomers().catch(err => { console.warn('Customers fetch fallback:', err); return []; }),
@@ -68,6 +77,7 @@ export function AppProvider({ children }) {
         db.fetchRefillTrips().catch(err => { console.warn('Refill trips fetch fallback:', err); return []; }),
         db.fetchNotes().catch(err => { console.warn('Notes fetch fallback:', err); return []; }),
         db.fetchMarketPrices().catch(err => { console.warn('Market prices fetch fallback:', err); return null; }),
+        db.fetchAgencySettings().catch(err => { console.warn('Agency settings fetch fallback:', err); return null; }),
         db.fetchAppUsers().catch(err => { console.warn('App users fetch fallback:', err); return []; }),
       ]);
       setCustomers(customersData || []);
@@ -79,6 +89,10 @@ export function AppProvider({ children }) {
       if (marketData?.prices) {
         setMarketPrices(marketData.prices);
         setMarketPricesMeta(marketData.meta || { updatedAt: null, updatedBy: 'Admin' });
+      }
+      if (agencyData?.settings) {
+        setAgencySettings(agencyData.settings);
+        setAgencySettingsMeta({ syncedWithSupabase: agencyData.syncedWithSupabase });
       }
       setAppUsers(usersData || []);
     } catch (err) {
@@ -647,6 +661,40 @@ export function AppProvider({ children }) {
     }
   };
 
+  // ==================== AGENCY SETTINGS ====================
+
+  const updateAgencySettings = async (newSettings) => {
+    try {
+      const res = await db.saveAgencySettings(newSettings, currentUser?.name || 'Admin');
+      setAgencySettings(res.settings);
+      setAgencySettingsMeta({
+        syncedWithSupabase: res.syncedWithSupabase,
+        error: res.error,
+        updatedAt: res.settings.updatedAt,
+      });
+      return res;
+    } catch (err) {
+      console.error('Failed to update agency settings:', err);
+      throw err;
+    }
+  };
+
+  const resetAgencySettings = async () => {
+    try {
+      const res = await db.saveAgencySettings(DEFAULT_AGENCY_SETTINGS, currentUser?.name || 'Admin');
+      setAgencySettings(res.settings);
+      setAgencySettingsMeta({
+        syncedWithSupabase: res.syncedWithSupabase,
+        error: res.error,
+        updatedAt: res.settings.updatedAt,
+      });
+      return res;
+    } catch (err) {
+      console.error('Failed to reset agency settings:', err);
+      throw err;
+    }
+  };
+
   // ==================== CONTEXT VALUE ====================
 
   return (
@@ -657,6 +705,7 @@ export function AppProvider({ children }) {
       loading, error, reloadData: loadAllData,
       customers, addCustomer, updateCustomer, deleteCustomer,
       marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
+      agencySettings, agencySettingsMeta, updateAgencySettings, resetAgencySettings,
       stock, updateStock, addStockManual, getStockByType,
       invoices, createInvoice, updateInvoice, editInvoiceFull, deleteInvoice,
       updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,

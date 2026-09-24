@@ -1,16 +1,33 @@
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import { DEFAULT_AGENCY_SETTINGS } from '../lib/constants';
 
-export function exportInvoiceExcel(invoice) {
+function getActiveAgencySettings(customSettings) {
+  if (customSettings && customSettings.agencyName) {
+    return { ...DEFAULT_AGENCY_SETTINGS, ...customSettings };
+  }
+  try {
+    const saved = localStorage.getItem('jig_agency_settings');
+    if (saved) return { ...DEFAULT_AGENCY_SETTINGS, ...JSON.parse(saved) };
+  } catch (_e) {}
+  return DEFAULT_AGENCY_SETTINGS;
+}
+
+export function exportInvoiceExcel(invoice, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const isEB = invoice.invoiceType === 'Empty Bottle';
   const ws_data = [
-    ['JAYDEEP INDIAN GAS AGENCY'],
+    [(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()],
+    [`${settings.companyName || settings.agencyName} | ${settings.tagline || 'Authorized Indane LPG Distributor'}`],
+    [`GSTIN: ${settings.gstin || '24ABCDE1234F1Z5'} | PAN: ${settings.panNumber || '—'} | Phone: ${settings.phone || '9876543210'}`],
+    [`Address: ${[settings.address, settings.city, settings.state, settings.pincode].filter(Boolean).join(', ')}`],
+    [],
     ['Invoice Type:', isEB ? 'Empty Bottle Collection Invoice' : 'Standard Refill Invoice'],
     ['Invoice Number:', invoice.invoiceNumber],
     ['Date:', invoice.date],
     ['Customer:', invoice.customerName],
-    ['Phone:', invoice.customerPhone],
-    ['Address:', invoice.customerAddress],
+    ['Phone:', invoice.customerPhone || '—'],
+    ['Address:', invoice.customerAddress || '—'],
     ['Payment Mode:', invoice.paymentMode],
     ['Status:', invoice.deliveryStatus],
     ['Payment Status:', invoice.paymentStatus],
@@ -44,13 +61,16 @@ export function exportInvoiceExcel(invoice) {
     [],
     ['', '', '', '', '', 'Total Amount:', invoice.totalAmount],
     ['', '', '', '', '', 'Amount Paid:', invoice.paidAmount],
-    ['', '', '', '', '', 'Balance Due:', invoice.totalAmount - invoice.paidAmount],
+    ['', '', '', '', '', 'Balance Due:', invoice.totalAmount - (Number(invoice.paidAmount) || 0)],
     [],
+    ['Bank Details:', `${settings.bankName} | A/C: ${settings.accountNumber} | IFSC: ${settings.ifscCode} | UPI: ${settings.upiId}`],
     ['Notes:', invoice.notes || '—'],
+    ['Terms & Conditions:', settings.invoiceTerms || '—'],
+    ['Footer Note:', settings.invoiceFooterNote || `Thank you for your business! — ${settings.agencyName}`],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(ws_data);
-  ws['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 18 }];
+  ws['!cols'] = [{ wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 18 }];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isEB ? 'Empty Bottle Receipt' : 'Invoice');
@@ -60,7 +80,8 @@ export function exportInvoiceExcel(invoice) {
   saveAs(blob, `${invoice.invoiceNumber}.xlsx`);
 }
 
-export function exportAllInvoicesExcel(invoices) {
+export function exportAllInvoicesExcel(invoices, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const headers = [
     'Invoice No', 'Type', 'Date', 'Customer', 'Phone', 'Address',
     'Items', 'Cylinder Types', 'Total Qty',
@@ -83,7 +104,7 @@ export function exportAllInvoicesExcel(invoices) {
       totalQty,
       inv.totalAmount,
       inv.paidAmount,
-      inv.totalAmount - inv.paidAmount,
+      inv.totalAmount - (Number(inv.paidAmount) || 0),
       inv.paymentMode,
       inv.deliveryStatus,
       inv.paymentStatus,
@@ -91,7 +112,13 @@ export function exportAllInvoicesExcel(invoices) {
     ];
   });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — ALL INVOICES`],
+    [`GSTIN: ${settings.gstin || '—'} | Phone: ${settings.phone || '—'}`],
+    [],
+    headers,
+    ...rows
+  ]);
   ws['!cols'] = headers.map(() => ({ wch: 18 }));
 
   const wb = XLSX.utils.book_new();
@@ -99,83 +126,71 @@ export function exportAllInvoicesExcel(invoices) {
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, 'JIG-All-Invoices.xlsx');
+  saveAs(blob, `${(settings.invoicePrefix || 'JIG')}-All-Invoices.xlsx`);
 }
 
-export function exportCustomersExcel(customers, marketPrices) {
+export function exportCustomersExcel(customers, marketPrices, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const mkt = marketPrices || {};
-  const headers = [
-    'Customer ID', 'Name', 'Phone', 'Address', 'Type',
-    '5kg Cust Price (Rs)', '5kg Market Price (Rs)', '5kg Discount (Rs)', '5kg Discount (%)',
-    '19kg Cust Price (Rs)', '19kg Market Price (Rs)', '19kg Discount (Rs)', '19kg Discount (%)',
-    '47.5kg Cust Price (Rs)', '47.5kg Market Price (Rs)', '47.5kg Discount (Rs)', '47.5kg Discount (%)',
-    '5kg Bottles (Net)', '19kg Bottles (Net)', '47.5kg Bottles (Net)', 'Total Bottles (Net)',
-    '5kg Empty w/ Cust', '19kg Empty w/ Cust', '47.5kg Empty w/ Cust', 'Total Empty Pending',
-  ];
-
-  const defaultBalance = () => ({
-    '5kg': { filledGiven: 0, emptyCollected: 0 },
-    '19kg': { filledGiven: 0, emptyCollected: 0 },
-    '47.5kg': { filledGiven: 0, emptyCollected: 0 },
-  });
-
-  const defaultEmptyStock = () => ({
-    '5kg': { withCustomer: 0, collected: 0 },
-    '19kg': { withCustomer: 0, collected: 0 },
-    '47.5kg': { withCustomer: 0, collected: 0 },
-  });
-
   const cylTypes = ['5kg', '19kg', '47.5kg'];
 
+  const headers = [
+    'Customer ID', 'Name', 'Phone', 'Address', 'Customer Type',
+    ...cylTypes.map(t => `${t} Price (Rs)`),
+    ...cylTypes.map(t => `${t} Discount (%)`),
+    ...cylTypes.map(t => `${t} Filled Given`),
+    ...cylTypes.map(t => `${t} Empty Collected`),
+    ...cylTypes.map(t => `${t} Pending Empty`),
+  ];
+
   const rows = customers.map(c => {
-    const bal = c.bottleBalance || defaultBalance();
-    const es = c.emptyBottleStock || defaultEmptyStock();
+    const custPrices = c.prices || {};
+    const bal = c.bottleBalance || {};
+    const stock = c.emptyBottleStock || {};
 
-    const getNet = (type) => {
-      const b = bal[type] || { filledGiven: 0, emptyCollected: 0 };
-      return b.filledGiven - b.emptyCollected;
-    };
-    const getEmptyPending = (type) => {
-      const s = es[type] || { withCustomer: 0, collected: 0 };
-      return Math.max(0, s.withCustomer - s.collected);
-    };
+    const priceCols = cylTypes.map(t => {
+      return custPrices[t] !== undefined ? Number(custPrices[t]) : (Number(mkt[t]) || 0);
+    });
 
-    const b5 = getNet('5kg');
-    const b19 = getNet('19kg');
-    const b47 = getNet('47.5kg');
-    const totalNet = b5 + b19 + b47;
-
-    const e5 = getEmptyPending('5kg');
-    const e19 = getEmptyPending('19kg');
-    const e47 = getEmptyPending('47.5kg');
-    const totalEmpty = e5 + e19 + e47;
-
-    const priceDiscountCols = [];
-    cylTypes.forEach(t => {
+    const discCols = cylTypes.map(t => {
       const mktP = Number(mkt[t]) || 0;
-      const custP = c.prices?.[t] !== undefined ? Number(c.prices[t]) : mktP;
-      const discAmt = Math.max(0, mktP - custP);
-      const discPct = mktP > 0 ? ((discAmt / mktP) * 100).toFixed(1) : '0.0';
-      priceDiscountCols.push(custP, mktP, discAmt, `${discPct}%`);
+      const custP = custPrices[t] !== undefined ? Number(custPrices[t]) : mktP;
+      if (mktP > 0 && custP < mktP) {
+        return `${(((mktP - custP) / mktP) * 100).toFixed(1)}%`;
+      }
+      return '0.0%';
+    });
+
+    const filledCols = cylTypes.map(t => bal[t]?.filledGiven || 0);
+    const collectedCols = cylTypes.map(t => bal[t]?.emptyCollected || 0);
+    const pendingCols = cylTypes.map(t => {
+      const s = stock[t] || { withCustomer: 0, collected: 0 };
+      return Math.max(0, (s.withCustomer || 0) - (s.collected || 0));
     });
 
     return [
-      c.id, c.name, c.phone, c.address, c.type,
-      ...priceDiscountCols,
-      b5, b19, b47, totalNet,
-      e5, e19, e47, totalEmpty,
+      c.id, c.name, c.phone, c.address, c.type || 'N/A',
+      ...priceCols,
+      ...discCols,
+      ...filledCols,
+      ...collectedCols,
+      ...pendingCols,
     ];
   });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — CUSTOMER DIRECTORY`],
+    [],
+    headers,
+    ...rows
+  ]);
   ws['!cols'] = headers.map(() => ({ wch: 18 }));
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Customers');
 
-  // Add Market Prices summary sheet
   const marketSheet = [
-    ['JAYDEEP INDIAN GAS AGENCY — Current Market Prices'],
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — Current Market Prices`],
     [],
     ['Cylinder Type', 'Market Price (Rs)'],
     ...cylTypes.map(t => [t, Number(mkt[t]) || 0]),
@@ -188,10 +203,11 @@ export function exportCustomersExcel(customers, marketPrices) {
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, 'JIG-Customers.xlsx');
+  saveAs(blob, `${(settings.invoicePrefix || 'JIG')}-Customers.xlsx`);
 }
 
-export function exportStockExcel(stock) {
+export function exportStockExcel(stock, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const headers = ['Cylinder Type', 'Filled Bottles', 'Empty Bottles', 'Total', 'Fill Rate (%)'];
   const rows = stock.map(s => {
     const total = s.filledCount + s.emptyCount;
@@ -199,7 +215,12 @@ export function exportStockExcel(stock) {
     return [s.cylinderType, s.filledCount, s.emptyCount, total, `${fillRate}%`];
   });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — INVENTORY STOCK REPORT`],
+    [],
+    headers,
+    ...rows
+  ]);
   ws['!cols'] = headers.map(() => ({ wch: 18 }));
 
   const wb = XLSX.utils.book_new();
@@ -207,17 +228,23 @@ export function exportStockExcel(stock) {
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, 'JIG-Stock-Report.xlsx');
+  saveAs(blob, `${(settings.invoicePrefix || 'JIG')}-Stock-Report.xlsx`);
 }
 
-export function exportDailyReportExcel(data) {
+export function exportDailyReportExcel(data, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const headers = ['Date', 'Total Invoices', 'Revenue (Rs)', 'Collected (Rs)', 'Outstanding (Rs)', 'Collection Rate (%)'];
   const rows = data.map(d => {
     const collRate = d.revenue > 0 ? ((d.collected / d.revenue) * 100).toFixed(1) : '0.0';
     return [d.date, d.totalInvoices, d.revenue, d.collected, d.outstanding, `${collRate}%`];
   });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — DAILY REPORT`],
+    [],
+    headers,
+    ...rows
+  ]);
   ws['!cols'] = headers.map(() => ({ wch: 18 }));
 
   const wb = XLSX.utils.book_new();
@@ -225,17 +252,23 @@ export function exportDailyReportExcel(data) {
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, 'JIG-Daily-Report.xlsx');
+  saveAs(blob, `${(settings.invoicePrefix || 'JIG')}-Daily-Report.xlsx`);
 }
 
-export function exportMonthlyReportExcel(data) {
+export function exportMonthlyReportExcel(data, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const headers = ['Month', 'Total Invoices', 'Revenue (Rs)', 'Collected (Rs)', 'Outstanding (Rs)', 'Collection Rate (%)'];
   const rows = data.map(d => {
     const collRate = d.revenue > 0 ? ((d.collected / d.revenue) * 100).toFixed(1) : '0.0';
     return [d.month, d.totalInvoices, d.revenue, d.collected, d.outstanding, `${collRate}%`];
   });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — MONTHLY REPORT`],
+    [],
+    headers,
+    ...rows
+  ]);
   ws['!cols'] = headers.map(() => ({ wch: 18 }));
 
   const wb = XLSX.utils.book_new();
@@ -243,22 +276,24 @@ export function exportMonthlyReportExcel(data) {
 
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, 'JIG-Monthly-Report.xlsx');
+  saveAs(blob, `${(settings.invoicePrefix || 'JIG')}-Monthly-Report.xlsx`);
 }
 
-export function exportCustomerReportExcel(customer, invoices, marketPrices) {
+export function exportCustomerReportExcel(customer, invoices, marketPrices, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const mkt = marketPrices || {};
   const cylTypes = ['5kg', '19kg', '47.5kg'];
   const totalBusiness = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalPaid = invoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
+  const totalPaid = invoices.reduce((sum, inv) => sum + (Number(inv.paidAmount) || 0), 0);
   const totalDue = totalBusiness - totalPaid;
 
   const summaryData = [
-    ['JAYDEEP INDIAN GAS AGENCY - CUSTOMER STATEMENT'],
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} - CUSTOMER STATEMENT`],
+    [`GSTIN: ${settings.gstin || '—'} | Phone: ${settings.phone || '—'}`],
     [],
     ['Customer Name:', customer.name],
     ['Phone:', customer.phone],
-    ['Address:', customer.address],
+    ['Address:', customer.address || '—'],
     ['Customer Type:', customer.type || 'N/A'],
     [],
     ['=== PRICING & DISCOUNT COMPARISON ==='],
@@ -290,7 +325,7 @@ export function exportCustomerReportExcel(customer, invoices, marketPrices) {
       inv.items.map(i => `${i.qty}x${i.cylinderType}${isEB ? ' (Empty)' : ''}`).join(', '),
       inv.totalAmount,
       inv.paidAmount,
-      inv.totalAmount - inv.paidAmount,
+      inv.totalAmount - (Number(inv.paidAmount) || 0),
       inv.paymentStatus,
       inv.notes || ''
     ];

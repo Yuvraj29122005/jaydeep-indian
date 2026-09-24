@@ -14,7 +14,7 @@ const allNavItems = [
 ];
 
 export default function Sidebar() {
-  const { logout, currentUser, hasModuleAccess } = useApp();
+  const { logout, currentUser, hasModuleAccess, agencySettings } = useApp();
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -41,9 +41,13 @@ export default function Sidebar() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '1.2rem', flexShrink: 0,
           }}>🔥</div>
-          <div>
-            <div className="sidebar-brand-name">JAYDEEP</div>
-            <div className="sidebar-brand-sub">Indian Gas Agency</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="sidebar-brand-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {agencySettings?.agencyName?.split(' ')[0] || 'JAYDEEP'}
+            </div>
+            <div className="sidebar-brand-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {agencySettings?.tagline || 'Indian Gas Agency'}
+            </div>
           </div>
         </div>
       </div>
@@ -61,16 +65,25 @@ export default function Sidebar() {
           </NavLink>
         ))}
 
-        {currentUser?.role === 'admin' && (
+        {(currentUser?.role === 'admin' || hasModuleAccess('settings')) && (
           <>
             <div className="nav-section-label" style={{ marginTop: 14 }}>Administration</div>
             <NavLink
-              to="/users"
+              to="/settings"
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
             >
-              <span className="nav-icon">👥🔑</span>
-              User Accounts
+              <span className="nav-icon">⚙️</span>
+              Agency Settings
             </NavLink>
+            {currentUser?.role === 'admin' && (
+              <NavLink
+                to="/users"
+                className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              >
+                <span className="nav-icon">👥🔑</span>
+                User Accounts
+              </NavLink>
+            )}
           </>
         )}
       </nav>

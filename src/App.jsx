@@ -16,6 +16,7 @@ import Expenses from './pages/Expenses';
 import RefillTracking from './pages/RefillTracking';
 import PersonalNotes from './pages/PersonalNotes';
 import UserManagement from './pages/UserManagement';
+import Settings from './pages/Settings';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useApp();
@@ -26,6 +27,9 @@ function ModuleGuard({ module, children }) {
   const { hasModuleAccess, currentUser } = useApp();
   if (module === 'users') {
     return currentUser?.role === 'admin' ? children : <Navigate to="/dashboard" replace />;
+  }
+  if (module === 'settings') {
+    return (currentUser?.role === 'admin' || hasModuleAccess('settings')) ? children : <Navigate to="/dashboard" replace />;
   }
   return hasModuleAccess(module) ? children : <Navigate to="/dashboard" replace />;
 }
@@ -49,6 +53,7 @@ function AppRoutes() {
         <Route path="/expenses" element={<ModuleGuard module="expenses"><Expenses /></ModuleGuard>} />
         <Route path="/reports" element={<ModuleGuard module="reports"><Reports /></ModuleGuard>} />
         <Route path="/notes" element={<ModuleGuard module="notes"><PersonalNotes /></ModuleGuard>} />
+        <Route path="/settings" element={<ModuleGuard module="settings"><Settings /></ModuleGuard>} />
         <Route path="/users" element={<ModuleGuard module="users"><UserManagement /></ModuleGuard>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -17,7 +17,7 @@ export default function CreateInvoice() {
   const { id } = useParams();
   const isEditing = Boolean(id);
   const location = useLocation();
-  const { customers, createInvoice, editInvoiceFull, getStockByType, invoices } = useApp();
+  const { customers, createInvoice, editInvoiceFull, getStockByType, invoices, agencySettings } = useApp();
   const navigate = useNavigate();
 
   const [invoiceType, setInvoiceType] = useState('Standard');
@@ -39,14 +39,17 @@ export default function CreateInvoice() {
       const qType = searchParams.get('type');
       const qCust = searchParams.get('customer');
 
+      const invPrefix = agencySettings?.invoicePrefix || 'JIG';
+      const ebPrefix = agencySettings?.emptyBottlePrefix || 'EB';
+
       const isEB = qType === 'empty';
       if (isEB) {
         setInvoiceType('Empty Bottle');
-        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith('EB-')).length + 1;
-        setInvoiceNumber(`EB-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
+        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith(`${ebPrefix}-`) || i.invoiceNumber?.startsWith('EB-')).length + 1;
+        setInvoiceNumber(`${ebPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
       } else {
         const count = invoices.length + 1;
-        setInvoiceNumber(`JIG-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
+        setInvoiceNumber(`${invPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
       }
 
       if (qCust) {
@@ -123,9 +126,12 @@ export default function CreateInvoice() {
     setInvoiceType(type);
 
     if (!isEditing) {
+      const invPrefix = agencySettings?.invoicePrefix || 'JIG';
+      const ebPrefix = agencySettings?.emptyBottlePrefix || 'EB';
+
       if (type === 'Empty Bottle') {
-        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith('EB-')).length + 1;
-        setInvoiceNumber(`EB-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
+        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith(`${ebPrefix}-`) || i.invoiceNumber?.startsWith('EB-')).length + 1;
+        setInvoiceNumber(`${ebPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
         // If selected customer has pending empty bottles, suggest auto-filling
         if (selectedCustomer) {
           autoFillPendingBottles(selectedCustomer);
@@ -134,7 +140,7 @@ export default function CreateInvoice() {
         }
       } else {
         const count = invoices.length + 1;
-        setInvoiceNumber(`JIG-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
+        setInvoiceNumber(`${invPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
         setItems([blankItem(false)]);
       }
     }

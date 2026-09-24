@@ -1,32 +1,64 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { DEFAULT_AGENCY_SETTINGS } from '../lib/constants';
 
-export function exportInvoicePDF(invoice) {
+function getActiveAgencySettings(customSettings) {
+  if (customSettings && customSettings.agencyName) {
+    return { ...DEFAULT_AGENCY_SETTINGS, ...customSettings };
+  }
+  try {
+    const saved = localStorage.getItem('jig_agency_settings');
+    if (saved) return { ...DEFAULT_AGENCY_SETTINGS, ...JSON.parse(saved) };
+  } catch (_e) {}
+  return DEFAULT_AGENCY_SETTINGS;
+}
+
+export function exportInvoicePDF(invoice, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const doc = new jsPDF();
 
-  // Header
+  // Header Banner
   doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, 210, 45, 'F');
+  doc.rect(0, 0, 210, 48, 'F');
+  
+  // Agency / Company Name
   doc.setTextColor(255, 165, 0);
-  doc.setFontSize(20);
+  doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text('JAYDEEP INDIAN GAS AGENCY', 105, 18, { align: 'center' });
-  doc.setFontSize(10);
+  doc.text((settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase(), 105, 15, { align: 'center' });
+
+  // Subtitle / Legal line
+  doc.setFontSize(9.5);
+  doc.setTextColor(220, 220, 220);
+  doc.setFont('helvetica', 'normal');
+  const subText = `${settings.tagline || 'Authorized Indian Gas Distributor'}${settings.city ? ` | ${settings.city}, ${settings.state}` : ''}`;
+  doc.text(subText, 105, 23, { align: 'center' });
+
+  // GST & Contact Line
+  doc.setFontSize(8.5);
   doc.setTextColor(200, 200, 200);
-  doc.text('Authorized Indian Gas Distributor | Surat, Gujarat', 105, 27, { align: 'center' });
-  doc.text('Phone: 9876543210 | GSTIN: 24ABCDE1234F1Z5', 105, 34, { align: 'center' });
+  const contactText = `Phone: ${settings.phone || '9876543210'}${settings.alternatePhone ? ` / ${settings.alternatePhone}` : ''} | GSTIN: ${settings.gstin || '24ABCDE1234F1Z5'}${settings.panNumber ? ` | PAN: ${settings.panNumber}` : ''}`;
+  doc.text(contactText, 105, 30, { align: 'center' });
+
+  // Address & Email Line
+  if (settings.address || settings.email) {
+    doc.setFontSize(8);
+    doc.setTextColor(170, 180, 195);
+    const addrEmail = [settings.address, settings.email].filter(Boolean).join(' | ');
+    doc.text(addrEmail, 105, 37, { align: 'center' });
+  }
 
   const isEB = invoice.invoiceType === 'Empty Bottle';
 
   // Invoice badge
   doc.setFillColor(isEB ? 59 : 255, isEB ? 130 : 165, isEB ? 246 : 0);
-  doc.roundedRect(130, 50, 70, 28, 3, 3, 'F');
+  doc.roundedRect(130, 52, 70, 28, 3, 3, 'F');
   doc.setTextColor(isEB ? 255 : 15, isEB ? 255 : 23, isEB ? 255 : 42);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text(isEB ? 'EMPTY BOTTLE RECEIPT' : 'TAX INVOICE', 165, 60, { align: 'center' });
+  doc.text(isEB ? 'EMPTY BOTTLE RECEIPT' : 'TAX INVOICE', 165, 62, { align: 'center' });
   doc.setFontSize(10);
-  doc.text(invoice.invoiceNumber, 165, 70, { align: 'center' });
+  doc.text(invoice.invoiceNumber, 165, 72, { align: 'center' });
 
   // Invoice info
   doc.setTextColor(30, 30, 30);
@@ -53,12 +85,12 @@ export function exportInvoicePDF(invoice) {
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text('Bill To:', 14, 90);
+  doc.text('Bill To:', 14, 88);
   doc.setFont('helvetica', 'normal');
-  doc.text(invoice.customerName, 14, 97);
-  doc.text(invoice.customerPhone || '', 14, 104);
+  doc.text(invoice.customerName, 14, 95);
+  doc.text(invoice.customerPhone || '', 14, 101);
   const addrLines = doc.splitTextToSize(invoice.customerAddress || '', 90);
-  doc.text(addrLines, 14, 111);
+  doc.text(addrLines, 14, 107);
 
   // Items table
   const tableHead = isEB
@@ -75,71 +107,132 @@ export function exportInvoicePDF(invoice) {
     return isEB
       ? [
           item.cylinderType,
-          item.qty,
-          `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
+          `${item.qty} bottles`,
+          item.unitPrice > 0 ? `Rs. ${item.unitPrice}` : 'Rs. 0 (Collection)',
           `Rs. ${amt.toLocaleString('en-IN')}`,
-          '✓ Collected',
+          'Collected',
         ]
       : [
           item.cylinderType,
           item.qty,
-          `Rs. ${(Number(item.unitPrice) || 0).toLocaleString('en-IN')}`,
-          `Rs. ${(Number(mktPrice) || 0).toLocaleString('en-IN')}`,
+          `Rs. ${item.unitPrice}`,
+          `Rs. ${mktPrice}`,
           discPct,
           `Rs. ${amt.toLocaleString('en-IN')}`,
-          item.emptyCollected ? '✓ Yes' : '✗ No',
+          item.emptyCollected ? `Yes (${item.emptyCount !== undefined ? item.emptyCount : item.qty})` : 'No',
         ];
   });
 
   autoTable(doc, {
-    startY: 125,
+    startY: Math.max(118, 107 + (addrLines.length * 5)),
     head: tableHead,
     body: tableBody,
     theme: 'grid',
-    headStyles: { fillColor: [15, 23, 42], textColor: [255, 165, 0], fontStyle: 'bold' },
+    headStyles: { fillColor: isEB ? [59, 130, 246] : [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: 8, cellPadding: 3 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    styles: { fontSize: 9, cellPadding: 3.5 },
   });
 
-  const finalY = doc.lastAutoTable.finalY + 10;
+  const finalY = doc.lastAutoTable.finalY + 8;
 
-  // Totals
+  // Totals Box
+  doc.setFillColor(248, 250, 252);
+  doc.rect(115, finalY - 4, 85, 30, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(115, finalY - 4, 85, 30, 'S');
+
+  doc.setFontSize(9);
+  doc.setTextColor(50, 50, 50);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Total Amount:`, 120, finalY);
+  doc.text(`Total Amount:`, 120, finalY + 3);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Rs. ${invoice.totalAmount.toLocaleString('en-IN')}`, 196, finalY, { align: 'right' });
+  doc.text(`Rs. ${invoice.totalAmount.toLocaleString('en-IN')}`, 194, finalY + 3, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
-  doc.text(`Amount Paid:`, 120, finalY + 8);
-  doc.setFillColor(22, 163, 74);
-  doc.text(`Rs. ${invoice.paidAmount.toLocaleString('en-IN')}`, 196, finalY + 8, { align: 'right' });
+  doc.text(`Amount Paid:`, 120, finalY + 11);
+  doc.setTextColor(22, 163, 74);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Rs. ${(Number(invoice.paidAmount) || 0).toLocaleString('en-IN')}`, 194, finalY + 11, { align: 'right' });
 
-  const balance = invoice.totalAmount - invoice.paidAmount;
+  const balance = invoice.totalAmount - (Number(invoice.paidAmount) || 0);
   if (balance > 0) {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(220, 38, 38);
-    doc.text(`Balance Due:`, 120, finalY + 16);
-    doc.text(`Rs. ${balance.toLocaleString('en-IN')}`, 196, finalY + 16, { align: 'right' });
+    doc.text(`Balance Due:`, 120, finalY + 19);
+    doc.text(`Rs. ${balance.toLocaleString('en-IN')}`, 194, finalY + 19, { align: 'right' });
   }
 
+  // Bank & UPI Box on left
+  let extraY = finalY;
+  if (settings.bankName || settings.upiId) {
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, extraY - 4, 95, 30, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.rect(14, extraY - 4, 95, 30, 'S');
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text('BANK & UPI PAYMENT DETAILS', 18, extraY + 2);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`Bank: ${settings.bankName || 'State Bank of India'} | A/C: ${settings.accountNumber || '—'}`, 18, extraY + 8);
+    doc.text(`IFSC: ${settings.ifscCode || '—'} | Branch: ${settings.branch || '—'}`, 18, extraY + 14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(234, 88, 12);
+    doc.text(`UPI VPA: ${settings.upiId || '—'}`, 18, extraY + 20);
+    extraY += 34;
+  } else {
+    extraY += 28;
+  }
+
+  // Notes
   if (invoice.notes) {
     doc.setTextColor(80, 80, 80);
     doc.setFont('helvetica', 'italic');
-    doc.setFontSize(9);
-    doc.text(`Notes: ${invoice.notes}`, 14, finalY + 28);
+    doc.setFontSize(8.5);
+    doc.text(`Notes: ${invoice.notes}`, 14, extraY);
+    extraY += 8;
   }
 
-  // Footer
-  doc.setTextColor(150, 150, 150);
+  // Terms and Signatory Box
+  const termsY = Math.max(extraY + 4, 230);
+  if (settings.invoiceTerms && termsY < 265) {
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(71, 85, 105);
+    doc.text('TERMS & CONDITIONS:', 14, termsY);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    const splitTerms = doc.splitTextToSize(settings.invoiceTerms, 115);
+    doc.text(splitTerms, 14, termsY + 4);
+  }
+
+  // Authorized Signatory
   doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 41, 59);
+  doc.text(`For ${(settings.agencyName || 'Jaydeep Indian Gas Agency').toUpperCase()}`, 196, termsY, { align: 'right' });
   doc.setFont('helvetica', 'normal');
-  doc.text('Thank you for your business! — Jaydeep Indian Gas Agency', 105, 285, { align: 'center' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`(${settings.signatoryTitle || 'Authorized Signatory'})`, 196, termsY + 22, { align: 'right' });
+
+  // Footer Note
+  doc.setTextColor(140, 150, 160);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  const footerNote = settings.invoiceFooterNote || `Thank you for your business! — ${settings.agencyName}`;
+  doc.text(footerNote, 105, 287, { align: 'center' });
 
   doc.save(`${invoice.invoiceNumber}.pdf`);
 }
 
-export function exportAllInvoicesPDF(invoices) {
+export function exportAllInvoicesPDF(invoices, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const doc = new jsPDF();
 
   doc.setFillColor(15, 23, 42);
@@ -147,11 +240,11 @@ export function exportAllInvoicesPDF(invoices) {
   doc.setTextColor(255, 165, 0);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('JAYDEEP INDIAN GAS AGENCY — All Invoices', 105, 20, { align: 'center' });
+  doc.text(`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — All Invoices`, 105, 20, { align: 'center' });
 
   // Summary
   const totalRev = invoices.reduce((s, i) => s + i.totalAmount, 0);
-  const totalPaid = invoices.reduce((s, i) => s + i.paidAmount, 0);
+  const totalPaid = invoices.reduce((s, i) => s + (Number(i.paidAmount) || 0), 0);
   const totalDue = totalRev - totalPaid;
 
   doc.setTextColor(30, 30, 30);
@@ -166,8 +259,8 @@ export function exportAllInvoicesPDF(invoices) {
     inv.customerName,
     inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
     `Rs. ${inv.totalAmount.toLocaleString('en-IN')}`,
-    `Rs. ${inv.paidAmount.toLocaleString('en-IN')}`,
-    `Rs. ${(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}`,
+    `Rs. ${(Number(inv.paidAmount) || 0).toLocaleString('en-IN')}`,
+    `Rs. ${(inv.totalAmount - (Number(inv.paidAmount) || 0)).toLocaleString('en-IN')}`,
     inv.paymentStatus,
   ]);
 
@@ -181,10 +274,11 @@ export function exportAllInvoicesPDF(invoices) {
     alternateRowStyles: { fillColor: [248, 250, 252] },
   });
 
-  doc.save('JIG-All-Invoices.pdf');
+  doc.save(`${(settings.invoicePrefix || 'JIG')}-All-Invoices.pdf`);
 }
 
-export function exportCustomerReportPDF(customer, invoices, marketPrices) {
+export function exportCustomerReportPDF(customer, invoices, marketPrices, customSettings = null) {
+  const settings = getActiveAgencySettings(customSettings);
   const doc = new jsPDF();
   const mkt = marketPrices || {};
   const cylTypes = ['5kg', '19kg', '47.5kg'];
@@ -194,18 +288,18 @@ export function exportCustomerReportPDF(customer, invoices, marketPrices) {
   doc.setTextColor(255, 165, 0);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('JAYDEEP INDIAN GAS AGENCY', 105, 18, { align: 'center' });
-  doc.setFontSize(12);
+  doc.text((settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase(), 105, 18, { align: 'center' });
+  doc.setFontSize(11);
   doc.setTextColor(255, 255, 255);
-  doc.text('Customer Statement', 105, 26, { align: 'center' });
+  doc.text(`Customer Statement | GSTIN: ${settings.gstin || '—'}`, 105, 26, { align: 'center' });
 
   // Customer Info
   doc.setTextColor(200, 200, 200);
-  doc.setFontSize(10);
+  doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.text(`Name: ${customer.name}`, 14, 34);
   doc.text(`Phone: ${customer.phone}`, 14, 40);
-  doc.text(`Address: ${customer.address}`, 105, 34);
+  doc.text(`Address: ${customer.address || '—'}`, 105, 34);
   doc.text(`Type: ${customer.type || 'N/A'}`, 105, 40);
 
   // Price Comparison Table
@@ -242,7 +336,7 @@ export function exportCustomerReportPDF(customer, invoices, marketPrices) {
 
   // Financial Summary
   const totalBusiness = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalPaid = invoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
+  const totalPaid = invoices.reduce((sum, inv) => sum + (Number(inv.paidAmount) || 0), 0);
   const totalDue = totalBusiness - totalPaid;
 
   doc.setTextColor(30, 30, 30);
@@ -262,8 +356,8 @@ export function exportCustomerReportPDF(customer, invoices, marketPrices) {
       isEB ? 'EB' : 'Refill',
       inv.items.map(i => `${i.qty}x${i.cylinderType}`).join(', '),
       `Rs. ${inv.totalAmount.toLocaleString('en-IN')}`,
-      `Rs. ${inv.paidAmount.toLocaleString('en-IN')}`,
-      `Rs. ${(inv.totalAmount - inv.paidAmount).toLocaleString('en-IN')}`,
+      `Rs. ${(Number(inv.paidAmount) || 0).toLocaleString('en-IN')}`,
+      `Rs. ${(inv.totalAmount - (Number(inv.paidAmount) || 0)).toLocaleString('en-IN')}`,
       inv.paymentStatus,
     ];
   });

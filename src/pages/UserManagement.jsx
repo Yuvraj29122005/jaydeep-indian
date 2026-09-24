@@ -10,6 +10,7 @@ const MODULES = [
   { key: 'reports', label: 'Reports & Analytics', icon: '📈', desc: 'Daily, monthly, and financial summaries' },
   { key: 'expenses', label: 'Expenses', icon: '💸', desc: 'Agency operational expenses & logs' },
   { key: 'notes', label: 'Personal Notes', icon: '📝', desc: 'Day-wise private logs & file attachments' },
+  { key: 'settings', label: 'Agency Settings', icon: '⚙️', desc: 'Company identity, GST, bank & invoice configurations' },
 ];
 
 const PRESETS = {
@@ -22,6 +23,7 @@ const PRESETS = {
     reports: 'view',
     expenses: 'none',
     notes: 'none',
+    settings: 'view',
   },
   staff: {
     dashboard: 'full',
@@ -32,6 +34,7 @@ const PRESETS = {
     reports: 'view',
     expenses: 'none',
     notes: 'view',
+    settings: 'view',
   },
   admin: {
     dashboard: 'full',
@@ -42,6 +45,7 @@ const PRESETS = {
     reports: 'view',
     expenses: 'edit',
     notes: 'edit',
+    settings: 'full',
   },
 };
 
