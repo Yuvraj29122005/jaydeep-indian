@@ -18,12 +18,13 @@ export default function Customers() {
   const {
     customers, addCustomer, updateCustomer, deleteCustomer, updateEmptyBottleStock,
     marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
-    canEditModule
+    canEditModule, invoices
   } = useApp();
   const canEdit = canEditModule('customers');
 
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('All');
+  const [filterBillStatus, setFilterBillStatus] = useState('All'); // 'All' | 'Pending' | 'Paid' | 'NoBills'
   const [modal, setModal] = useState(null); // null | 'add' | 'edit'
   const [editId, setEditId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -66,6 +67,27 @@ export default function Customers() {
   const [discountSaving, setDiscountSaving] = useState(false);
   const [discountSuccess, setDiscountSuccess] = useState(false);
 
+  const getCustomerBillInfo = (customerId) => {
+    const custInvs = (invoices || []).filter(inv => inv.customerId === customerId);
+    let totalDue = 0;
+    let pendingCount = 0;
+    custInvs.forEach(inv => {
+      const bal = Math.max(0, (Number(inv.totalAmount) || 0) - (Number(inv.paidAmount) || 0));
+      if (bal > 0 || inv.paymentStatus === 'Unpaid' || inv.paymentStatus === 'Partial') {
+        pendingCount++;
+        totalDue += bal;
+      }
+    });
+    return {
+      totalInvoices: custInvs.length,
+      pendingCount,
+      totalDue,
+      hasPending: pendingCount > 0,
+    };
+  };
+
+  const pendingCustomersCount = customers.filter(c => getCustomerBillInfo(c.id).hasPending).length;
+
   const filtered = customers.filter(c => {
     const searchLower = (search || '').toLowerCase();
     const nameMatch = (c.name || '').toLowerCase().includes(searchLower);
@@ -74,7 +96,18 @@ export default function Customers() {
     
     const matchSearch = nameMatch || phoneMatch || addressMatch;
     const matchType = filterType === 'All' || c.type === filterType;
-    return matchSearch && matchType;
+
+    const billInfo = getCustomerBillInfo(c.id);
+    let matchBill = true;
+    if (filterBillStatus === 'Pending') {
+      matchBill = billInfo.hasPending;
+    } else if (filterBillStatus === 'Paid') {
+      matchBill = billInfo.totalInvoices > 0 && !billInfo.hasPending;
+    } else if (filterBillStatus === 'NoBills') {
+      matchBill = billInfo.totalInvoices === 0;
+    }
+
+    return matchSearch && matchType && matchBill;
   });
 
   // Open Add Customer Modal
@@ -421,8 +454,8 @@ export default function Customers() {
       </div>
 
       {/* Filters */}
-      <div className="filter-bar">
-        <div className="search-input-wrap">
+      <div className="filter-bar" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="search-input-wrap" style={{ flex: 1, minWidth: 240 }}>
           <span className="search-icon">🔍</span>
           <input
             className="search-input"
@@ -432,9 +465,54 @@ export default function Customers() {
           />
         </div>
         <select className="form-control" style={{ width: 160 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
-          <option value="All">All Types</option>
+          <option value="All">All Customer Types</option>
           {CUSTOMER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        <select
+          className="form-control"
+          style={{
+            width: 230,
+            borderColor: filterBillStatus === 'Pending' ? 'var(--danger)' : undefined,
+            background: filterBillStatus === 'Pending' ? 'rgba(239, 68, 68, 0.07)' : undefined,
+            fontWeight: filterBillStatus === 'Pending' ? 700 : 500
+          }}
+          value={filterBillStatus}
+          onChange={e => setFilterBillStatus(e.target.value)}
+        >
+          <option value="All">All Bill Statuses</option>
+          <option value="Pending">⚠️ Unpaid / Pending Bills ({pendingCustomersCount})</option>
+          <option value="Paid">✅ All Bills Paid (No Due)</option>
+          <option value="NoBills">⚪ No Invoices Yet</option>
+        </select>
+      </div>
+
+      {/* Quick filter pills */}
+      <div style={{ display: 'flex', gap: 8, marginTop: -12, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Filter by Bills:</span>
+        <button
+          type="button"
+          className={`btn btn-sm ${filterBillStatus === 'All' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+          onClick={() => setFilterBillStatus('All')}
+        >
+          All Customers ({customers.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${filterBillStatus === 'Pending' ? 'btn-danger' : 'btn-secondary'}`}
+          style={{ fontSize: '0.76rem', padding: '3px 10px', fontWeight: pendingCustomersCount > 0 ? 700 : 400 }}
+          onClick={() => setFilterBillStatus('Pending')}
+        >
+          ⚠️ Has Unpaid/Pending Bills ({pendingCustomersCount})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${filterBillStatus === 'Paid' ? 'btn-success' : 'btn-secondary'}`}
+          style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+          onClick={() => setFilterBillStatus('Paid')}
+        >
+          ✅ All Paid (No Due)
+        </button>
       </div>
 
       {/* Customers Table */}
@@ -453,12 +531,13 @@ export default function Customers() {
                 <th>💰 Prices & Discounts (vs Market)</th>
                 <th>🟢 Filled Sold</th>
                 <th>🫙 Empty Pending</th>
+                <th>💳 Bill Status / Due</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
+                <tr><td colSpan={9} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No customers found</td></tr>
               ) : filtered.map(c => {
                 const stock = getEmptyStock(c);
                 const invBal = getInvoiceBalance(c);
@@ -583,6 +662,40 @@ export default function Customers() {
                           ✅ All collected
                         </span>
                       )}
+                    </td>
+                    <td>
+                      {(() => {
+                        const billInfo = getCustomerBillInfo(c.id);
+                        if (billInfo.hasPending) {
+                          return (
+                            <div>
+                              <span className="badge badge-danger" style={{ fontWeight: 700, padding: '4px 9px', fontSize: '0.82rem' }}>
+                                ₹{billInfo.totalDue.toLocaleString('en-IN')} Due
+                              </span>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--danger)', fontWeight: 600, marginTop: 4 }}>
+                                ⚠️ {billInfo.pendingCount} pending bill{billInfo.pendingCount > 1 ? 's' : ''}
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (billInfo.totalInvoices > 0) {
+                          return (
+                            <div>
+                              <span className="badge badge-success" style={{ padding: '4px 9px', fontSize: '0.75rem' }}>
+                                ✅ All Paid
+                              </span>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                {billInfo.totalInvoices} invoice{billInfo.totalInvoices > 1 ? 's' : ''}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <span className="badge badge-muted" style={{ padding: '3px 8px', fontSize: '0.72rem' }}>
+                            No Invoices
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td>
                       <div className="btn-group">

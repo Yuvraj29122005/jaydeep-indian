@@ -7,7 +7,7 @@ const CYL_ICONS = { '5kg': '🟡', '19kg': '🟠', '47.5kg': '🔴' };
 const CYL_DESC = { '5kg': 'Small Domestic', '19kg': 'Standard Commercial', '47.5kg': 'Industrial/Hotel' };
 
 export default function Stock() {
-  const { stock, addStockManual, updateStock, canEditModule } = useApp();
+  const { stock, addStockManual, updateStock, canEditModule, agencySettings } = useApp();
   const canEdit = canEditModule('stock');
   const [activeTab, setActiveTab] = useState('overview');
   const [addModal, setAddModal] = useState(null); // cylinderType
@@ -49,7 +49,7 @@ export default function Stock() {
           <p className="page-subtitle">Track filled and empty cylinder inventory</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-secondary" onClick={() => exportStockExcel(stock)}>
+          <button className="btn btn-secondary" onClick={() => exportStockExcel(stock, agencySettings)}>
             📥 Export Excel
           </button>
         </div>

@@ -22,6 +22,8 @@ export default function CustomerDetail() {
   const customer = customers.find(c => c.id === id);
 
   const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [filterPayment, setFilterPayment] = useState('All'); // 'All' | 'Pending' | 'Unpaid' | 'Partial' | 'Paid'
+  const [searchInvoice, setSearchInvoice] = useState('');
   const [editPrices, setEditPrices] = useState({});
   const [editDiscounts, setEditDiscounts] = useState({});
   const [editDiscountAmts, setEditDiscountAmts] = useState({});
@@ -126,6 +128,38 @@ export default function CustomerDetail() {
   const totalBusiness = customerInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
   const totalPaid = customerInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
   const totalDue = totalBusiness - totalPaid;
+
+  // Filter & counts for bills/invoices
+  const pendingInvoices = customerInvoices.filter(inv => {
+    const bal = (Number(inv.totalAmount) || 0) - (Number(inv.paidAmount) || 0);
+    return bal > 0 || inv.paymentStatus === 'Unpaid' || inv.paymentStatus === 'Partial';
+  });
+  const unpaidInvoices = customerInvoices.filter(inv => inv.paymentStatus === 'Unpaid');
+  const partialInvoices = customerInvoices.filter(inv => inv.paymentStatus === 'Partial');
+  const paidInvoices = customerInvoices.filter(inv => inv.paymentStatus === 'Paid' && ((Number(inv.totalAmount) || 0) - (Number(inv.paidAmount) || 0) <= 0));
+
+  const filteredCustomerInvoices = customerInvoices.filter(inv => {
+    const bal = (Number(inv.totalAmount) || 0) - (Number(inv.paidAmount) || 0);
+    const isPending = bal > 0 || inv.paymentStatus === 'Unpaid' || inv.paymentStatus === 'Partial';
+
+    let matchPayment = true;
+    if (filterPayment === 'Pending') {
+      matchPayment = isPending;
+    } else if (filterPayment === 'Unpaid') {
+      matchPayment = inv.paymentStatus === 'Unpaid';
+    } else if (filterPayment === 'Partial') {
+      matchPayment = inv.paymentStatus === 'Partial';
+    } else if (filterPayment === 'Paid') {
+      matchPayment = inv.paymentStatus === 'Paid';
+    }
+
+    const s = searchInvoice.trim().toLowerCase();
+    const matchSearch = !s ||
+      (inv.invoiceNumber || '').toLowerCase().includes(s) ||
+      (inv.date || '').toLowerCase().includes(s);
+
+    return matchPayment && matchSearch;
+  });
 
   // Calculate filled bottles sold (from invoice balance)
   const bottleBalance = customer.bottleBalance || {
@@ -374,9 +408,95 @@ export default function CustomerDetail() {
       </div>
 
       <div className="card">
-        <div className="card-header">
-          <span className="card-title">🧾 Transaction History</span>
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span className="card-title" style={{ margin: 0 }}>🧾 Transaction History</span>
+            <span className="badge badge-muted">{filteredCustomerInvoices.length} of {customerInvoices.length}</span>
+            {pendingInvoices.length > 0 && (
+              <span className="badge badge-danger" style={{ fontWeight: 700 }}>
+                ⚠️ {pendingInvoices.length} Pending Bills
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div className="search-input-wrap" style={{ minWidth: 190 }}>
+              <span className="search-icon">🔍</span>
+              <input
+                className="search-input"
+                placeholder="Search invoice # or date..."
+                value={searchInvoice}
+                onChange={e => setSearchInvoice(e.target.value)}
+                style={{ padding: '6px 12px 6px 30px', fontSize: '0.82rem' }}
+              />
+            </div>
+
+            <select
+              className="form-control"
+              style={{
+                width: 210,
+                fontSize: '0.84rem',
+                borderColor: filterPayment === 'Pending' ? 'var(--danger)' : undefined,
+                background: filterPayment === 'Pending' ? 'rgba(239,68,68,0.06)' : undefined,
+                fontWeight: filterPayment === 'Pending' ? 700 : 500
+              }}
+              value={filterPayment}
+              onChange={e => setFilterPayment(e.target.value)}
+            >
+              <option value="All">All Bills ({customerInvoices.length})</option>
+              <option value="Pending">⚠️ Unpaid / Pending ({pendingInvoices.length})</option>
+              <option value="Unpaid">🔴 Unpaid Only ({unpaidInvoices.length})</option>
+              <option value="Partial">🟡 Partial Only ({partialInvoices.length})</option>
+              <option value="Paid">🟢 Paid Only ({paidInvoices.length})</option>
+            </select>
+          </div>
         </div>
+
+        {/* Quick filter pills */}
+        <div style={{ display: 'flex', gap: 8, padding: '10px 18px', borderBottom: '1px solid var(--border)', background: 'var(--bg-body)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>Filter:</span>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterPayment === 'All' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+            onClick={() => setFilterPayment('All')}
+          >
+            All ({customerInvoices.length})
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterPayment === 'Pending' ? 'btn-danger' : 'btn-secondary'}`}
+            style={{ fontSize: '0.76rem', padding: '3px 10px', fontWeight: pendingInvoices.length > 0 ? 700 : 400 }}
+            onClick={() => setFilterPayment('Pending')}
+          >
+            ⚠️ Unpaid / Pending ({pendingInvoices.length})
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterPayment === 'Unpaid' ? 'btn-danger' : 'btn-secondary'}`}
+            style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+            onClick={() => setFilterPayment('Unpaid')}
+          >
+            🔴 Unpaid ({unpaidInvoices.length})
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterPayment === 'Partial' ? 'btn-warning' : 'btn-secondary'}`}
+            style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+            onClick={() => setFilterPayment('Partial')}
+          >
+            🟡 Partial ({partialInvoices.length})
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${filterPayment === 'Paid' ? 'btn-success' : 'btn-secondary'}`}
+            style={{ fontSize: '0.76rem', padding: '3px 10px' }}
+            onClick={() => setFilterPayment('Paid')}
+          >
+            🟢 Paid ({paidInvoices.length})
+          </button>
+        </div>
+
         <div className="table-wrap">
           <table>
             <thead>
@@ -393,9 +513,15 @@ export default function CustomerDetail() {
               </tr>
             </thead>
             <tbody>
-              {customerInvoices.length === 0 ? (
-                <tr><td colSpan={9} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>No transactions found for this customer.</td></tr>
-              ) : customerInvoices.map(inv => {
+              {filteredCustomerInvoices.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="text-center" style={{ padding: 40, color: 'var(--text-muted)' }}>
+                    {customerInvoices.length === 0
+                      ? 'No transactions found for this customer.'
+                      : `No invoices match the selected filter "${filterPayment}".`}
+                  </td>
+                </tr>
+              ) : filteredCustomerInvoices.map(inv => {
                 const isEB = inv.invoiceType === 'Empty Bottle';
                 const bal = inv.totalAmount - inv.paidAmount;
                 return (

@@ -190,7 +190,7 @@ export default function Dashboard() {
               <div className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>Pending Collection</div>
               <div className="text-danger fw-800" style={{ fontSize: '1.3rem' }}>₹{dayOutstanding.toLocaleString('en-IN')}</div>
             </div>
-            <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(dayInvoices, agencySettings)}>
+            <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(dayInvoices, agencySettings, stock)}>
               📥 Export Day Report
             </button>
           </div>

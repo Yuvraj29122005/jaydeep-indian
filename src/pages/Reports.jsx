@@ -112,7 +112,7 @@ export default function Reports() {
           <p className="page-subtitle">Business insights and data export</p>
         </div>
         <div className="btn-group">
-          <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(filtered, agencySettings)}>📥 Invoices Excel</button>
+          <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(filtered, agencySettings, stock)}>📥 Invoices Excel</button>
           <button className="btn btn-secondary" onClick={() => exportAllInvoicesPDF(filtered, agencySettings)}>📄 Invoices PDF</button>
           <button className="btn btn-secondary" onClick={() => exportCustomersExcel(customers, marketPrices, agencySettings)}>👥 Customers Excel</button>
           <button className="btn btn-secondary" onClick={() => exportStockExcel(stock, agencySettings)}>📦 Stock Excel</button>
@@ -306,7 +306,7 @@ export default function Reports() {
       <div className="card mt-24">
         <div className="card-header">
           <span className="card-title">📅 Daily Report</span>
-          <button className="btn btn-secondary btn-sm" onClick={() => exportDailyReportExcel(dailyData, agencySettings)}>📥 Export Excel</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportDailyReportExcel(dailyData, agencySettings, stock)}>📥 Export Excel</button>
         </div>
         <div className="table-wrap">
           <table>
@@ -341,7 +341,7 @@ export default function Reports() {
       <div className="card mt-24">
         <div className="card-header">
           <span className="card-title">🗓️ Monthly Report</span>
-          <button className="btn btn-secondary btn-sm" onClick={() => exportMonthlyReportExcel(monthlyDataReport, agencySettings)}>📥 Export Excel</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => exportMonthlyReportExcel(monthlyDataReport, agencySettings, stock)}>📥 Export Excel</button>
         </div>
         <div className="table-wrap">
           <table>
