@@ -5,7 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { useApp } from '../context/AppContext';
-import { exportAllInvoicesExcel, exportDashboardDayReportExcel } from '../utils/exportExcel';
+import { exportAllInvoicesExcel, exportDashboardReportExcel, exportDashboardDayReportExcel } from '../utils/exportExcel';
 
 const COLORS = ['#ea580c', '#3b82f6', '#16a34a', '#dc2626'];
 
@@ -82,6 +82,18 @@ export default function Dashboard() {
     });
     return Object.values(monthMap);
   }, [invoices]);
+
+  const handleExportDashboard = () => {
+    exportDashboardReportExcel({
+      dayInvoices,
+      invoices,
+      stock,
+      customers,
+      agencySettings,
+      selectedDate,
+      monthlySalesData,
+    });
+  };
 
   const payBadge = (status) => {
     if (status === 'Paid') return <span className="badge badge-success">Paid</span>;
@@ -164,6 +176,14 @@ export default function Dashboard() {
           <p className="page-subtitle">{agencySettings?.agencyName || 'Jaydeep Indian Gas Agency'} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleExportDashboard}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}
+            title="Export full summary of all dashboard data: revenue, outstanding, stock, empty bottles, and invoices"
+          >
+            📥 Export Dashboard Report
+          </button>
           {currentUser?.role === 'admin' && (
             <button className="btn btn-danger" onClick={openResetModal} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               ⚠️ Reset All Data
@@ -212,7 +232,7 @@ export default function Dashboard() {
             </div>
             <button
               className="btn btn-secondary"
-              onClick={() => exportDashboardDayReportExcel(dayInvoices, agencySettings, stock, customers, selectedDate)}
+              onClick={handleExportDashboard}
               title="Export complete Day Operations, Revenue & Empty Bottle Audit Report"
             >
               📥 Export Day Report
