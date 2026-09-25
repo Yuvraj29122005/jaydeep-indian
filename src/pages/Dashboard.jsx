@@ -5,7 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { useApp } from '../context/AppContext';
-import { exportAllInvoicesExcel } from '../utils/exportExcel';
+import { exportAllInvoicesExcel, exportDashboardDayReportExcel } from '../utils/exportExcel';
 
 const COLORS = ['#ea580c', '#3b82f6', '#16a34a', '#dc2626'];
 
@@ -35,6 +35,18 @@ export default function Dashboard() {
   const dayInvoices = invoices.filter(i => i.date === selectedDate);
   const dayRevenue = dayInvoices.reduce((s, i) => s + i.totalAmount, 0);
   const dayOutstanding = dayInvoices.reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0);
+
+  const dayFilledSold = dayInvoices.filter(i => i.invoiceType !== 'Empty Bottle').reduce((s, i) => s + i.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
+  const dayEmptyCollected = dayInvoices.reduce((s, i) => {
+    if (i.invoiceType === 'Empty Bottle') return s + i.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0);
+    return s + i.items.reduce((ss, it) => ss + (it.emptyCount !== undefined ? Number(it.emptyCount) : (it.emptyCollected ? Number(it.qty) : 0)), 0);
+  }, 0);
+  const dayEmptyNotCollected = dayInvoices.filter(i => i.invoiceType !== 'Empty Bottle').reduce((s, i) => {
+    return s + i.items.reduce((ss, it) => {
+      const coll = it.emptyCount !== undefined ? Number(it.emptyCount) : (it.emptyCollected ? Number(it.qty) : 0);
+      return ss + Math.max(0, (Number(it.qty) || 0) - coll);
+    }, 0);
+  }, 0);
 
   const totalRevenue = invoices.reduce((s, i) => s + i.totalAmount, 0);
   const totalOutstanding = invoices.reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0);
@@ -181,16 +193,28 @@ export default function Dashboard() {
               style={{ padding: '8px 12px' }}
             />
           </div>
-          <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
             <div>
-              <div className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>Day Revenue (Sell)</div>
-              <div className="text-success fw-800" style={{ fontSize: '1.3rem' }}>₹{dayRevenue.toLocaleString('en-IN')}</div>
+              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase' }}>Day Revenue</div>
+              <div className="text-success fw-800" style={{ fontSize: '1.25rem' }}>₹{dayRevenue.toLocaleString('en-IN')}</div>
             </div>
             <div>
-              <div className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 600, textTransform: 'uppercase' }}>Pending Collection</div>
-              <div className="text-danger fw-800" style={{ fontSize: '1.3rem' }}>₹{dayOutstanding.toLocaleString('en-IN')}</div>
+              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase' }}>Pending Due</div>
+              <div className="text-danger fw-800" style={{ fontSize: '1.25rem' }}>₹{dayOutstanding.toLocaleString('en-IN')}</div>
             </div>
-            <button className="btn btn-secondary" onClick={() => exportAllInvoicesExcel(dayInvoices, agencySettings, stock)}>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase' }}>🫙 Empty Collected</div>
+              <div className="fw-800" style={{ fontSize: '1.25rem', color: '#16a34a' }}>{dayEmptyCollected}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase' }}>⚠️ Empty Pending</div>
+              <div className="fw-800" style={{ fontSize: '1.25rem', color: dayEmptyNotCollected > 0 ? '#dc2626' : 'var(--text-muted)' }}>{dayEmptyNotCollected}</div>
+            </div>
+            <button
+              className="btn btn-secondary"
+              onClick={() => exportDashboardDayReportExcel(dayInvoices, agencySettings, stock, customers, selectedDate)}
+              title="Export complete Day Operations, Revenue & Empty Bottle Audit Report"
+            >
               📥 Export Day Report
             </button>
           </div>

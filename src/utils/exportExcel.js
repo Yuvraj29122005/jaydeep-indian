@@ -87,6 +87,10 @@ const STYLES = {
   altRowBold: { font: FONT.bold, fill: { fgColor: { rgb: COLORS.altRowBg } }, alignment: ALIGN_LEFT, border: BORDER_THIN },
   altRowCurrency: { font: FONT.currency, fill: { fgColor: { rgb: COLORS.altRowBg } }, alignment: ALIGN_RIGHT, border: BORDER_THIN },
   warningCell: { font: { ...FONT.bold, color: { rgb: COLORS.warningFont } }, fill: { fgColor: { rgb: COLORS.warningBg } }, alignment: ALIGN_CENTER, border: BORDER_THIN },
+  dangerCenter: { font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } }, alignment: ALIGN_CENTER, border: BORDER_THIN },
+  successCenter: { font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } }, alignment: ALIGN_CENTER, border: BORDER_THIN },
+  warningCenter: { font: { ...FONT.bold, color: { rgb: COLORS.warningFont } }, fill: { fgColor: { rgb: COLORS.warningBg } }, alignment: ALIGN_CENTER, border: BORDER_THIN },
+  sectionCenter: { font: FONT.section, fill: { fgColor: { rgb: COLORS.sectionBg } }, alignment: ALIGN_CENTER, border: BORDER_THIN },
 };
 
 // ───────────────────────────────────────────────────────────────
@@ -358,14 +362,15 @@ export function exportAllInvoicesExcel(invoices, customSettings = null, stock = 
   const settings = getActiveAgencySettings(customSettings);
   const headers = [
     'Invoice No', 'Type', 'Date', 'Customer',
-    'Items Summary', 'Cylinder Types', 'Total Qty',
+    'Items Summary', 'Cylinder Types', 'Filled Sold',
+    'Empty Collected', 'Empty Not Collected',
     'Total (₹)', 'Paid (₹)', 'Balance (₹)',
     'Payment Mode', 'Payment Status',
   ];
   const colCount = headers.length;
 
   const wsData = [
-    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — ALL INVOICES REPORT`],
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()} — ALL INVOICES & BOTTLE AUDIT REPORT`],
     [`Generated: ${new Date().toLocaleString('en-IN')}  |  Total Invoices: ${invoices.length}`],
     [],
     headers,
@@ -373,22 +378,40 @@ export function exportAllInvoicesExcel(invoices, customSettings = null, stock = 
 
   const dataStartRow = wsData.length;
   let grandTotal = 0, grandPaid = 0;
+  let grandFilledSold = 0, grandEmptyCollected = 0, grandEmptyNotCollected = 0;
 
   invoices.forEach(inv => {
-    const totalQty = inv.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+    const isEB = inv.invoiceType === 'Empty Bottle';
     const cylTypes = [...new Set(inv.items.map(i => i.cylinderType))].join(', ');
     const balance = inv.totalAmount - (Number(inv.paidAmount) || 0);
     grandTotal += inv.totalAmount;
     grandPaid += Number(inv.paidAmount) || 0;
 
+    const filledSold = isEB ? 0 : inv.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0);
+    const emptyCollected = isEB
+      ? inv.items.reduce((sum, i) => sum + (Number(i.qty) || 0), 0)
+      : inv.items.reduce((sum, i) => sum + (i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0)), 0);
+    const emptyNotCollected = isEB
+      ? 0
+      : inv.items.reduce((sum, i) => {
+          const coll = i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0);
+          return sum + Math.max(0, (Number(i.qty) || 0) - coll);
+        }, 0);
+
+    grandFilledSold += filledSold;
+    grandEmptyCollected += emptyCollected;
+    grandEmptyNotCollected += emptyNotCollected;
+
     wsData.push([
       inv.invoiceNumber,
-      inv.invoiceType === 'Empty Bottle' ? 'Empty Bottle' : 'Refill',
+      isEB ? 'Empty Bottle' : 'Refill',
       formatDate(inv.date),
       inv.customerName,
       inv.items.map(i => `${i.qty}×${i.cylinderType}`).join(', '),
       cylTypes,
-      totalQty,
+      filledSold,
+      emptyCollected,
+      emptyNotCollected,
       formatCurrency(inv.totalAmount),
       formatCurrency(inv.paidAmount),
       formatCurrency(balance),
@@ -401,7 +424,8 @@ export function exportAllInvoicesExcel(invoices, customSettings = null, stock = 
 
   // Grand totals row
   wsData.push([
-    '', '', '', '', '', '', 'GRAND TOTAL',
+    '', '', '', '', '', 'GRAND TOTAL',
+    grandFilledSold, grandEmptyCollected, grandEmptyNotCollected,
     formatCurrency(grandTotal), formatCurrency(grandPaid), formatCurrency(grandTotal - grandPaid),
     '', '',
   ]);
@@ -415,8 +439,9 @@ export function exportAllInvoicesExcel(invoices, customSettings = null, stock = 
   // Create worksheet
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   ws['!cols'] = [
-    { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 20 },
-    { wch: 28 }, { wch: 16 }, { wch: 10 },
+    { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 22 },
+    { wch: 28 }, { wch: 16 }, { wch: 12 },
+    { wch: 16 }, { wch: 20 },
     { wch: 14 }, { wch: 14 }, { wch: 14 },
     { wch: 14 }, { wch: 14 },
   ];
@@ -435,20 +460,51 @@ export function exportAllInvoicesExcel(invoices, customSettings = null, stock = 
   styleRow(ws, 3, 0, colCount - 1, STYLES.header);
 
   // Style data rows with alternating colors
-  const colStyles = ['bold', 'center', 'center', 'left', 'left', 'center', 'center', 'right', 'right', 'right', 'center', 'center'];
+  const colStyles = ['bold', 'center', 'center', 'left', 'left', 'center', 'center', 'center', 'center', 'right', 'right', 'right', 'center', 'center'];
   styleDataRows(ws, dataStartRow, dataEndRow, colCount, colStyles);
 
-  // Style payment status cells with conditional coloring
+  // Conditional styles for empty bottle and payment cells
   for (let r = dataStartRow; r <= dataEndRow; r++) {
-    const statusRef = XLSX.utils.encode_cell({ r, c: 11 });
+    const isAlt = (r - dataStartRow) % 2 === 1;
+
+    // Highlight uncollected empty bottles
+    const emptyNotCollRef = XLSX.utils.encode_cell({ r, c: 8 });
+    if (ws[emptyNotCollRef]) {
+      const val = Number(ws[emptyNotCollRef].v) || 0;
+      if (val > 0) {
+        ws[emptyNotCollRef].s = {
+          font: FONT.danger,
+          fill: { fgColor: { rgb: COLORS.dangerBg } },
+          alignment: ALIGN_CENTER,
+          border: BORDER_THIN,
+        };
+      }
+    }
+
+    // Highlight empty collected
+    const emptyCollRef = XLSX.utils.encode_cell({ r, c: 7 });
+    if (ws[emptyCollRef]) {
+      const val = Number(ws[emptyCollRef].v) || 0;
+      if (val > 0) {
+        ws[emptyCollRef].s = {
+          font: FONT.success,
+          fill: { fgColor: { rgb: COLORS.successBg } },
+          alignment: ALIGN_CENTER,
+          border: BORDER_THIN,
+        };
+      }
+    }
+
+    // Payment status styling
+    const statusRef = XLSX.utils.encode_cell({ r, c: 13 });
     if (ws[statusRef]) {
       const val = String(ws[statusRef].v || '').toLowerCase();
       if (val === 'paid' || val === 'full') {
-        ws[statusRef].s = (r - dataStartRow) % 2 === 1
+        ws[statusRef].s = isAlt
           ? { ...STYLES.altRowCenter, font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } } }
           : { ...STYLES.normalCenter, font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } } };
       } else if (val === 'unpaid' || val === 'pending') {
-        ws[statusRef].s = (r - dataStartRow) % 2 === 1
+        ws[statusRef].s = isAlt
           ? { ...STYLES.altRowCenter, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } }
           : { ...STYLES.normalCenter, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } };
       } else if (val === 'partial') {
@@ -1000,4 +1056,583 @@ export function exportCustomerReportExcel(customer, invoices, marketPrices, cust
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Customer Statement');
   saveWorkbook(wb, `Statement-${customer.name.replace(/\s+/g, '-')}.xlsx`);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// 8. DASHBOARD DAY REPORT & COMPLETE EMPTY BOTTLE AUDIT
+// ═══════════════════════════════════════════════════════════════
+
+export function exportDashboardDayReportExcel(invoices, customSettings = null, stock = null, customers = null, selectedDate = null) {
+  const settings = getActiveAgencySettings(customSettings);
+  const reportDateStr = selectedDate || (invoices && invoices[0] ? invoices[0].date : new Date().toISOString().slice(0, 10));
+  const formattedDate = formatDate(reportDateStr);
+
+  const dayInvoices = invoices || [];
+  const dayRevenue = dayInvoices.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
+  const dayPaid = dayInvoices.reduce((s, i) => s + (Number(i.paidAmount) || 0), 0);
+  const dayOutstanding = Math.max(0, dayRevenue - dayPaid);
+  const paymentRate = dayRevenue > 0 ? ((dayPaid / dayRevenue) * 100).toFixed(1) : '100.0';
+
+  // Bottles sold vs collected today
+  let dayFilledSold = 0;
+  let dayEmptyCollected = 0;
+  let dayEmptyNotCollected = 0;
+
+  // Cylinder-wise tracking for today
+  const cylBreakdown = {
+    '5kg': { filledSold: 0, emptyCollected: 0, emptyNotCollected: 0 },
+    '19kg': { filledSold: 0, emptyCollected: 0, emptyNotCollected: 0 },
+    '47.5kg': { filledSold: 0, emptyCollected: 0, emptyNotCollected: 0 },
+  };
+
+  dayInvoices.forEach(inv => {
+    const isEB = inv.invoiceType === 'Empty Bottle';
+    inv.items.forEach(i => {
+      const type = i.cylinderType || '19kg';
+      const qty = Number(i.qty) || 0;
+      if (!cylBreakdown[type]) cylBreakdown[type] = { filledSold: 0, emptyCollected: 0, emptyNotCollected: 0 };
+
+      if (isEB) {
+        dayEmptyCollected += qty;
+        cylBreakdown[type].emptyCollected += qty;
+      } else {
+        const coll = i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? qty : 0);
+        const notColl = Math.max(0, qty - coll);
+        dayFilledSold += qty;
+        dayEmptyCollected += coll;
+        dayEmptyNotCollected += notColl;
+
+        cylBreakdown[type].filledSold += qty;
+        cylBreakdown[type].emptyCollected += coll;
+        cylBreakdown[type].emptyNotCollected += notColl;
+      }
+    });
+  });
+
+  const emptyReturnRate = dayFilledSold > 0 ? ((dayEmptyCollected / dayFilledSold) * 100).toFixed(1) : (dayEmptyCollected > 0 ? '100.0' : '0.0');
+
+  // Customer agency-wide pending empty bottles
+  let totalCustPending5kg = 0;
+  let totalCustPending19kg = 0;
+  let totalCustPending47kg = 0;
+  const customersWithPendingBottles = [];
+
+  if (customers && Array.isArray(customers)) {
+    customers.forEach(c => {
+      const stockObj = c.emptyBottleStock || {};
+      const net5 = Math.max(0, (Number(stockObj['5kg']?.withCustomer) || 0) - (Number(stockObj['5kg']?.collected) || 0));
+      const net19 = Math.max(0, (Number(stockObj['19kg']?.withCustomer) || 0) - (Number(stockObj['19kg']?.collected) || 0));
+      const net47 = Math.max(0, (Number(stockObj['47.5kg']?.withCustomer) || 0) - (Number(stockObj['47.5kg']?.collected) || 0));
+      const totalPending = net5 + net19 + net47;
+
+      totalCustPending5kg += net5;
+      totalCustPending19kg += net19;
+      totalCustPending47kg += net47;
+
+      if (totalPending > 0) {
+        customersWithPendingBottles.push({
+          name: c.name,
+          phone: c.phone || '—',
+          address: c.address || '—',
+          net5,
+          net19,
+          net47,
+          totalPending,
+        });
+      }
+    });
+    customersWithPendingBottles.sort((a, b) => b.totalPending - a.totalPending);
+  }
+
+  const grandAgencyPendingEmpty = totalCustPending5kg + totalCustPending19kg + totalCustPending47kg;
+
+  // Maximum columns across the report for clean width alignment
+  const colCount = 13;
+
+  // Build Sheet 1 Data
+  const wsData = [
+    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()}`],
+    [`${settings.tagline || 'Authorized Indane LPG Distributor'}  |  GSTIN: ${settings.gstin || '—'}  |  PAN: ${settings.panNumber || '—'}`],
+    [`DAILY COMPREHENSIVE OPERATIONS & EMPTY BOTTLE AUDIT REPORT — ${formattedDate.toUpperCase()}`],
+    [`Generated On: ${new Date().toLocaleString('en-IN')}  |  Report Date: ${formattedDate}  |  Total Billed Invoices: ${dayInvoices.length}`],
+    [],
+  ];
+
+  const merges = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: colCount - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: colCount - 1 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: colCount - 1 } },
+    { s: { r: 3, c: 0 }, e: { r: 3, c: colCount - 1 } },
+  ];
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 1: EXECUTIVE DAY SUMMARY (HIGHLIGHT KPI TABLE)
+  // ─────────────────────────────────────────────────────────────
+  const sec1HeaderRow = wsData.length;
+  wsData.push(['1. EXECUTIVE DAY PERFORMANCE & REVENUE SUMMARY']);
+  merges.push({ s: { r: sec1HeaderRow, c: 0 }, e: { r: sec1HeaderRow, c: colCount - 1 } });
+
+  const kpiHeaders = ['Metric Description', 'Value / Figure', 'Performance & Status Audit Note'];
+  wsData.push(kpiHeaders);
+  const kpiHeaderRow = wsData.length - 1;
+  const kpiStartRow = wsData.length;
+
+  wsData.push(['Report Date', formattedDate, 'Official accounting date for snapshot']);
+  wsData.push(['Total Invoices Billed', `${dayInvoices.length} Invoices`, dayInvoices.length > 0 ? 'Active billing transactions recorded' : 'No transactions billed for this date']);
+  wsData.push(['Total Day Revenue (Sales)', formatCurrency(dayRevenue), 'Gross value of all billed deliveries today']);
+  wsData.push(['Total Amount Collected (Paid)', formatCurrency(dayPaid), 'Net payments received (Cash, Online, UPI)']);
+  wsData.push(['Pending Payment / Outstanding Due', formatCurrency(dayOutstanding), dayOutstanding > 0 ? '⚠️ Outstanding payment collection due from customers' : '✅ 100% Cleared / No Pending Payment']);
+  wsData.push(['Payment Realization Rate', `${paymentRate}%`, Number(paymentRate) >= 90 ? '🟢 Strong collection performance' : '🟡 Follow-up needed with consumers']);
+  wsData.push(['Total Filled Cylinders Sold Today', `${dayFilledSold} Cylinders`, 'Filled cylinders delivered/dispatched today']);
+  wsData.push(['Total Empty Bottles Collected Today', `${dayEmptyCollected} Cylinders`, '🫙 Returned empty cylinders collected today']);
+  wsData.push(['Total Empty Bottles NOT Collected (Pending)', `${dayEmptyNotCollected} Cylinders`, dayEmptyNotCollected > 0 ? '⚠️ Empty bottles left with consumers (to be collected)' : '✅ 100% Empties retrieved']);
+  wsData.push(['Empty Return Rate (Today)', `${emptyReturnRate}%`, 'Ratio of empties returned vs filled cylinders sold']);
+  const kpiEndRow = wsData.length - 1;
+
+  wsData.push([]);
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 2: CYLINDER MOVEMENT & BOTTLE AUDIT TABLE (BY TYPE)
+  // ─────────────────────────────────────────────────────────────
+  const sec2HeaderRow = wsData.length;
+  wsData.push(['2. CYLINDER MOVEMENT & EMPTY BOTTLE RECONCILIATION (BY TYPE)']);
+  merges.push({ s: { r: sec2HeaderRow, c: 0 }, e: { r: sec2HeaderRow, c: colCount - 1 } });
+
+  const cylHeaders = [
+    'Cylinder Type',
+    'Filled Sold / Delivered',
+    'Empty Bottles Collected',
+    'Empty Bottles NOT Collected (Pending)',
+    'Empty Return %',
+    'Audit Status & Action Note'
+  ];
+  wsData.push(cylHeaders);
+  const cylHeaderRow = wsData.length - 1;
+  const cylStartRow = wsData.length;
+
+  ['5kg', '19kg', '47.5kg'].forEach(type => {
+    const d = cylBreakdown[type];
+    const rate = d.filledSold > 0 ? ((d.emptyCollected / d.filledSold) * 100).toFixed(1) : (d.emptyCollected > 0 ? '100.0' : '0.0');
+    let status = 'No Movement Today';
+    if (d.filledSold > 0 || d.emptyCollected > 0) {
+      if (d.emptyNotCollected === 0 && d.emptyCollected >= d.filledSold) {
+        status = '✅ All Empties Retrieved';
+      } else if (d.emptyNotCollected > 0) {
+        status = `⚠️ ${d.emptyNotCollected} Empties Pending with Consumers`;
+      } else {
+        status = `🫙 ${d.emptyCollected} Bottles Collected`;
+      }
+    }
+    wsData.push([
+      `${type} Cylinder`,
+      d.filledSold,
+      d.emptyCollected,
+      d.emptyNotCollected,
+      `${rate}%`,
+      status
+    ]);
+  });
+
+  // Cyl Total Row
+  wsData.push([
+    'TOTAL MOVEMENT',
+    dayFilledSold,
+    dayEmptyCollected,
+    dayEmptyNotCollected,
+    `${emptyReturnRate}%`,
+    dayEmptyNotCollected > 0 ? `⚠️ ${dayEmptyNotCollected} Total Empties Pending Today` : '✅ All Empties Retrieved'
+  ]);
+  const cylEndRow = wsData.length - 1;
+
+  wsData.push([]);
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 3: INVOICES & DELIVERIES DETAIL REGISTER
+  // ─────────────────────────────────────────────────────────────
+  const sec3HeaderRow = wsData.length;
+  wsData.push(['3. TODAY\'S INVOICES & DELIVERY AUDIT REGISTER']);
+  merges.push({ s: { r: sec3HeaderRow, c: 0 }, e: { r: sec3HeaderRow, c: colCount - 1 } });
+
+  const invHeaders = [
+    'Invoice No', 'Type', 'Customer Name', 'Items Summary', 'Cylinder Types',
+    'Filled Sold', 'Empty Collected', 'Empty Not Collected',
+    'Total (₹)', 'Paid (₹)', 'Balance (₹)', 'Payment Mode', 'Payment Status'
+  ];
+  wsData.push(invHeaders);
+  const invHeaderRow = wsData.length - 1;
+  const invStartRow = wsData.length;
+
+  if (dayInvoices.length === 0) {
+    wsData.push(['No invoices billed for this date', '', '', '', '', 0, 0, 0, '₹0', '₹0', '₹0', '—', '—']);
+  } else {
+    dayInvoices.forEach(inv => {
+      const isEB = inv.invoiceType === 'Empty Bottle';
+      const cylTypes = [...new Set(inv.items.map(i => i.cylinderType))].join(', ');
+      const balance = inv.totalAmount - (Number(inv.paidAmount) || 0);
+
+      const filledSold = isEB ? 0 : inv.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+      const emptyCollected = isEB
+        ? inv.items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
+        : inv.items.reduce((s, i) => s + (i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0)), 0);
+      const emptyNotCollected = isEB
+        ? 0
+        : inv.items.reduce((s, i) => {
+            const coll = i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0);
+            return s + Math.max(0, (Number(i.qty) || 0) - coll);
+          }, 0);
+
+      wsData.push([
+        inv.invoiceNumber,
+        isEB ? 'Empty Bottle' : 'Refill',
+        inv.customerName,
+        inv.items.map(i => `${i.qty}×${i.cylinderType}`).join(', '),
+        cylTypes,
+        filledSold,
+        emptyCollected,
+        emptyNotCollected,
+        formatCurrency(inv.totalAmount),
+        formatCurrency(inv.paidAmount),
+        formatCurrency(balance),
+        inv.paymentMode,
+        inv.paymentStatus
+      ]);
+    });
+  }
+  const invEndRow = wsData.length - 1;
+
+  // Grand Total of Invoices
+  wsData.push([
+    '', '', '', '', 'GRAND TOTAL',
+    dayFilledSold, dayEmptyCollected, dayEmptyNotCollected,
+    formatCurrency(dayRevenue), formatCurrency(dayPaid), formatCurrency(dayOutstanding),
+    '', ''
+  ]);
+  const invTotalRow = wsData.length - 1;
+
+  wsData.push([]);
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 4: GODOWN STOCK INVENTORY
+  // ─────────────────────────────────────────────────────────────
+  let stockStartRow = -1;
+  let stockEndRow = -1;
+  let sHeaderRow = -1;
+  if (stock && Array.isArray(stock) && stock.length > 0) {
+    const sec4HeaderRow = wsData.length;
+    wsData.push(['4. CURRENT GODOWN STOCK INVENTORY (WAREHOUSE COUNT)']);
+    merges.push({ s: { r: sec4HeaderRow, c: 0 }, e: { r: sec4HeaderRow, c: colCount - 1 } });
+
+    const stockHeaders = ['Cylinder Type', 'Filled in Godown', 'Empty in Godown', 'Total Warehouse Stock', 'Fill Ratio (%)', 'Stock Status & Notes'];
+    wsData.push(stockHeaders);
+    sHeaderRow = wsData.length - 1;
+    stockStartRow = wsData.length;
+
+    let totF = 0, totE = 0;
+    stock.forEach(s => {
+      const f = Number(s.filledCount) || 0;
+      const e = Number(s.emptyCount) || 0;
+      const tot = f + e;
+      const ratio = tot > 0 ? ((f / tot) * 100).toFixed(1) : '0.0';
+      let status = 'Adequate';
+      if (f === 0) status = '🔴 Out of Stock';
+      else if (f < 10) status = '⚠️ Low Stock (Refill Needed)';
+      else status = '🟢 Healthy Stock';
+
+      totF += f;
+      totE += e;
+
+      wsData.push([
+        `${s.cylinderType} Cylinder`,
+        f,
+        e,
+        tot,
+        `${ratio}%`,
+        status
+      ]);
+    });
+
+    const totAll = totF + totE;
+    const totRatio = totAll > 0 ? ((totF / totAll) * 100).toFixed(1) : '0.0';
+    wsData.push([
+      'TOTAL GODOWN STOCK',
+      totF,
+      totE,
+      totAll,
+      `${totRatio}%`,
+      totF < 20 ? '⚠️ Reorder / Refill Required' : '🟢 Normal Operations'
+    ]);
+    stockEndRow = wsData.length - 1;
+    wsData.push([]);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 5: AGENCY-WIDE PENDING EMPTY BOTTLES WITH CONSUMERS
+  // ─────────────────────────────────────────────────────────────
+  let agencyStartRow = -1;
+  let agencyEndRow = -1;
+  let agencyHeaderRow = -1;
+  if (customers && Array.isArray(customers) && customers.length > 0) {
+    const sec5HeaderRow = wsData.length;
+    wsData.push(['5. AGENCY-WIDE OUTSTANDING EMPTY BOTTLE SUMMARY (MARKET INVENTORY)']);
+    merges.push({ s: { r: sec5HeaderRow, c: 0 }, e: { r: sec5HeaderRow, c: colCount - 1 } });
+
+    wsData.push(['Category / Description', '5kg Bottles', '19kg Bottles', '47.5kg Bottles', 'Total Bottles', 'Status & Action Requirement']);
+    agencyHeaderRow = wsData.length - 1;
+    agencyStartRow = wsData.length;
+
+    wsData.push([
+      'Empty Cylinders Pending with Consumers',
+      totalCustPending5kg,
+      totalCustPending19kg,
+      totalCustPending47kg,
+      grandAgencyPendingEmpty,
+      grandAgencyPendingEmpty > 0 ? `⚠️ ${grandAgencyPendingEmpty} Total Empty Cylinders to Collect across ${customersWithPendingBottles.length} Customers` : '✅ All Clear / Zero Outstanding Empties'
+    ]);
+    agencyEndRow = wsData.length - 1;
+    wsData.push([]);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SECTION 6: FOOTER & SIGN-OFF
+  // ─────────────────────────────────────────────────────────────
+  const sec6HeaderRow = wsData.length;
+  wsData.push(['OFFICIAL VERIFICATION & AUDIT SIGN-OFF']);
+  merges.push({ s: { r: sec6HeaderRow, c: 0 }, e: { r: sec6HeaderRow, c: colCount - 1 } });
+  wsData.push([`Agency: ${settings.agencyName || 'Jaydeep Indian Gas Agency'}  |  Address: ${settings.address || '—'}  |  Phone: ${settings.phone || '—'}`]);
+  merges.push({ s: { r: wsData.length - 1, c: 0 }, e: { r: wsData.length - 1, c: colCount - 1 } });
+  wsData.push(['Authorized Signature: ___________________________          Verified By: ___________________________          Stamp: [                   ]']);
+  merges.push({ s: { r: wsData.length - 1, c: 0 }, e: { r: wsData.length - 1, c: colCount - 1 } });
+
+  // ─────────────────────────────────────────────────────────────
+  // CREATE & STYLE SHEET 1
+  // ─────────────────────────────────────────────────────────────
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!merges'] = merges;
+  ws['!cols'] = [
+    { wch: 18 }, // Invoice No / Metric / Type
+    { wch: 16 }, // Type / Val / Sold
+    { wch: 24 }, // Customer Name / Note / Empty Coll
+    { wch: 28 }, // Items Summary / Empty Not Coll
+    { wch: 18 }, // Cylinder Types / Return %
+    { wch: 14 }, // Filled Sold / Status
+    { wch: 16 }, // Empty Collected
+    { wch: 22 }, // Empty Not Collected
+    { wch: 15 }, // Total (₹)
+    { wch: 15 }, // Paid (₹)
+    { wch: 15 }, // Balance (₹)
+    { wch: 14 }, // Payment Mode
+    { wch: 15 }, // Payment Status
+  ];
+
+  // Header Title styling
+  styleRow(ws, 0, 0, colCount - 1, STYLES.title);
+  styleRow(ws, 1, 0, colCount - 1, STYLES.subtitle);
+  styleRow(ws, 2, 0, colCount - 1, STYLES.title);
+  styleRow(ws, 3, 0, colCount - 1, STYLES.subtitle);
+
+  // Section 1: KPI styling
+  styleRow(ws, sec1HeaderRow, 0, colCount - 1, STYLES.section);
+  styleRow(ws, kpiHeaderRow, 0, 2, STYLES.header);
+  for (let r = kpiStartRow; r <= kpiEndRow; r++) {
+    const isAlt = (r - kpiStartRow) % 2 === 1;
+    styleCell(ws, XLSX.utils.encode_cell({ r, c: 0 }), isAlt ? STYLES.altRowBold : STYLES.bold);
+    styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), isAlt ? STYLES.altRowBold : STYLES.bold);
+    styleCell(ws, XLSX.utils.encode_cell({ r, c: 2 }), isAlt ? STYLES.altRow : STYLES.normal);
+
+    // Special highlights for empty bottles and outstanding
+    if (r === kpiStartRow + 4) { // Outstanding
+      if (dayOutstanding > 0) {
+        styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), STYLES.danger);
+      } else {
+        styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), STYLES.success);
+      }
+    }
+    if (r === kpiStartRow + 7) { // Empty Collected
+      styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), STYLES.successCenter);
+    }
+    if (r === kpiStartRow + 8) { // Empty NOT Collected
+      if (dayEmptyNotCollected > 0) {
+        styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), STYLES.dangerCenter);
+      } else {
+        styleCell(ws, XLSX.utils.encode_cell({ r, c: 1 }), STYLES.successCenter);
+      }
+    }
+  }
+
+  // Section 2: Cylinder Movement styling
+  styleRow(ws, sec2HeaderRow, 0, colCount - 1, STYLES.section);
+  styleRow(ws, cylHeaderRow, 0, 5, STYLES.header);
+  const cylColStyles = ['bold', 'center', 'center', 'center', 'center', 'left'];
+  styleDataRows(ws, cylStartRow, cylEndRow - 1, 6, cylColStyles);
+  styleRow(ws, cylEndRow, 0, 5, STYLES.totalLabel);
+  // Highlight uncollected in Section 2
+  for (let r = cylStartRow; r <= cylEndRow; r++) {
+    const notCollRef = XLSX.utils.encode_cell({ r, c: 3 });
+    if (ws[notCollRef]) {
+      const val = Number(ws[notCollRef].v) || 0;
+      if (val > 0) {
+        ws[notCollRef].s = STYLES.dangerCenter;
+      }
+    }
+    const collRef = XLSX.utils.encode_cell({ r, c: 2 });
+    if (ws[collRef]) {
+      const val = Number(ws[collRef].v) || 0;
+      if (val > 0 && r !== cylEndRow) {
+        ws[collRef].s = STYLES.successCenter;
+      }
+    }
+  }
+
+  // Section 3: Invoices Register styling
+  styleRow(ws, sec3HeaderRow, 0, colCount - 1, STYLES.section);
+  styleRow(ws, invHeaderRow, 0, colCount - 1, STYLES.header);
+  const invColStyles = ['bold', 'center', 'left', 'left', 'center', 'center', 'center', 'center', 'right', 'right', 'right', 'center', 'center'];
+  styleDataRows(ws, invStartRow, invEndRow, colCount, invColStyles);
+
+  // Conditional styles for invoice table cells
+  for (let r = invStartRow; r <= invEndRow; r++) {
+    const isAlt = (r - invStartRow) % 2 === 1;
+
+    // Highlight uncollected empty bottles
+    const emptyNotCollRef = XLSX.utils.encode_cell({ r, c: 7 });
+    if (ws[emptyNotCollRef]) {
+      const val = Number(ws[emptyNotCollRef].v) || 0;
+      if (val > 0) {
+        ws[emptyNotCollRef].s = {
+          font: FONT.danger,
+          fill: { fgColor: { rgb: COLORS.dangerBg } },
+          alignment: ALIGN_CENTER,
+          border: BORDER_THIN,
+        };
+      }
+    }
+
+    // Highlight empty collected
+    const emptyCollRef = XLSX.utils.encode_cell({ r, c: 6 });
+    if (ws[emptyCollRef]) {
+      const val = Number(ws[emptyCollRef].v) || 0;
+      if (val > 0) {
+        ws[emptyCollRef].s = {
+          font: FONT.success,
+          fill: { fgColor: { rgb: COLORS.successBg } },
+          alignment: ALIGN_CENTER,
+          border: BORDER_THIN,
+        };
+      }
+    }
+
+    // Payment status styling
+    const statusRef = XLSX.utils.encode_cell({ r, c: 12 });
+    if (ws[statusRef]) {
+      const val = String(ws[statusRef].v || '').toLowerCase();
+      if (val === 'paid' || val === 'full') {
+        ws[statusRef].s = isAlt
+          ? { ...STYLES.altRowCenter, font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } } }
+          : { ...STYLES.normalCenter, font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } } };
+      } else if (val === 'unpaid' || val === 'pending') {
+        ws[statusRef].s = isAlt
+          ? { ...STYLES.altRowCenter, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } }
+          : { ...STYLES.normalCenter, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } };
+      } else if (val === 'partial') {
+        ws[statusRef].s = { ...STYLES.warningCell };
+      }
+    }
+  }
+
+  // Style grand total row of invoices
+  styleRow(ws, invTotalRow, 0, colCount - 1, STYLES.totalLabel);
+
+  // Section 4: Stock inventory styling
+  if (stockStartRow > 0) {
+    styleRow(ws, sHeaderRow, 0, 5, STYLES.header);
+    const stockColStyles = ['bold', 'center', 'center', 'center', 'center', 'left'];
+    styleDataRows(ws, stockStartRow, stockEndRow - 1, 6, stockColStyles);
+    styleRow(ws, stockEndRow, 0, 5, STYLES.totalLabel);
+  }
+
+  // Section 5: Agency-wide empty bottles styling
+  if (agencyStartRow > 0) {
+    styleRow(ws, agencyHeaderRow, 0, 5, STYLES.header);
+    styleRow(ws, agencyStartRow, 0, 5, STYLES.boldCenter);
+    styleCell(ws, XLSX.utils.encode_cell({ r: agencyStartRow, c: 0 }), STYLES.bold);
+    styleCell(ws, XLSX.utils.encode_cell({ r: agencyStartRow, c: 4 }), grandAgencyPendingEmpty > 0 ? STYLES.dangerCenter : STYLES.successCenter);
+  }
+
+  // Section 6: Footer styling
+  styleRow(ws, sec6HeaderRow, 0, colCount - 1, STYLES.section);
+  styleRow(ws, sec6HeaderRow + 1, 0, colCount - 1, STYLES.footer);
+  styleRow(ws, sec6HeaderRow + 2, 0, colCount - 1, STYLES.footer);
+
+  // Build Workbook
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Day Audit & Bottles');
+
+  // ─────────────────────────────────────────────────────────────
+  // SHEET 2: CUSTOMERS WITH PENDING EMPTY BOTTLES
+  // ─────────────────────────────────────────────────────────────
+  if (customersWithPendingBottles.length > 0) {
+    const wsCustData = [
+      [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()}`],
+      [`OUTSTANDING EMPTY BOTTLES CUSTOMER REGISTER — AS ON ${formattedDate.toUpperCase()}`],
+      [`Generated On: ${new Date().toLocaleString('en-IN')}  |  Customers with Pending Bottles: ${customersWithPendingBottles.length}  |  Total Pending: ${grandAgencyPendingEmpty} Bottles`],
+      [],
+      ['Sr No', 'Customer Name', 'Phone Number', 'Delivery Address', '5kg Pending', '19kg Pending', '47.5kg Pending', 'Total Empty Pending', 'Collection Action'],
+    ];
+
+    const cStartRow = wsCustData.length;
+    customersWithPendingBottles.forEach((c, idx) => {
+      wsCustData.push([
+        idx + 1,
+        c.name,
+        c.phone,
+        c.address,
+        c.net5,
+        c.net19,
+        c.net47,
+        c.totalPending,
+        c.totalPending > 5 ? '🔴 Immediate Pickup' : '⚠️ Follow-up & Collect'
+      ]);
+    });
+    const cEndRow = wsCustData.length - 1;
+
+    // Total row
+    wsCustData.push([
+      '', 'TOTAL OUTSTANDING', '', '',
+      totalCustPending5kg, totalCustPending19kg, totalCustPending47kg,
+      grandAgencyPendingEmpty, 'Total Empties in Market'
+    ]);
+    const cTotalRow = wsCustData.length - 1;
+
+    const wsCust = XLSX.utils.aoa_to_sheet(wsCustData);
+    wsCust['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 8 } },
+    ];
+    wsCust['!cols'] = [
+      { wch: 8 }, { wch: 24 }, { wch: 16 }, { wch: 30 },
+      { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 18 }, { wch: 22 }
+    ];
+
+    styleRow(wsCust, 0, 0, 8, STYLES.title);
+    styleRow(wsCust, 1, 0, 8, STYLES.subtitle);
+    styleRow(wsCust, 2, 0, 8, STYLES.subtitle);
+    styleRow(wsCust, 4, 0, 8, STYLES.header);
+
+    const cStyles = ['center', 'bold', 'center', 'left', 'center', 'center', 'center', 'center', 'left'];
+    styleDataRows(wsCust, cStartRow, cEndRow, 9, cStyles);
+
+    for (let r = cStartRow; r <= cEndRow; r++) {
+      const totRef = XLSX.utils.encode_cell({ r, c: 7 });
+      if (wsCust[totRef]) {
+        wsCust[totRef].s = STYLES.dangerCenter;
+      }
+    }
+    styleRow(wsCust, cTotalRow, 0, 8, STYLES.totalLabel);
+
+    XLSX.utils.book_append_sheet(wb, wsCust, 'Customer Bottle Dues');
+  }
+
+  saveWorkbook(wb, `${settings.invoicePrefix || 'JIG'}-Day-Report-${reportDateStr}.xlsx`);
 }
