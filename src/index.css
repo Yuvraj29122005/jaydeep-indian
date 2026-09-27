@@ -148,6 +148,28 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.25);
 }
 
 .nav-section-label {
@@ -218,20 +240,23 @@ input, select, textarea {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  padding: 9px;
+  padding: 10px;
   border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-weight: 600;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  font-weight: 700;
   font-size: 0.82rem;
-  transition: var(--transition);
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .logout-btn:hover {
-  background: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  transform: translateY(-1px);
 }
 
 .main-content {
@@ -253,7 +278,7 @@ input, select, textarea {
 
 .sidebar {
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: visible !important;
+  overflow: visible;
   position: fixed;
   top: 0;
   bottom: 0;
