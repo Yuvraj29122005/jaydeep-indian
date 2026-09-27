@@ -84,15 +84,20 @@ export default function Dashboard() {
   }, [invoices]);
 
   const handleExportDashboard = () => {
-    exportDashboardReportExcel({
-      dayInvoices,
-      invoices,
-      stock,
-      customers,
-      agencySettings,
-      selectedDate,
-      monthlySalesData,
-    });
+    try {
+      exportDashboardReportExcel({
+        dayInvoices,
+        invoices,
+        stock,
+        customers,
+        agencySettings,
+        selectedDate,
+        monthlySalesData,
+      });
+    } catch (err) {
+      console.error('Failed to export dashboard report:', err);
+      alert('Failed to generate report: ' + (err?.message || err));
+    }
   };
 
   const payBadge = (status) => {
@@ -230,13 +235,6 @@ export default function Dashboard() {
               <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase' }}>⚠️ Empty Pending</div>
               <div className="fw-800" style={{ fontSize: '1.25rem', color: dayEmptyNotCollected > 0 ? '#dc2626' : 'var(--text-muted)' }}>{dayEmptyNotCollected}</div>
             </div>
-            <button
-              className="btn btn-secondary"
-              onClick={handleExportDashboard}
-              title="Export complete Day Operations, Revenue & Empty Bottle Audit Report"
-            >
-              📥 Export Day Report
-            </button>
           </div>
         </div>
       </div>

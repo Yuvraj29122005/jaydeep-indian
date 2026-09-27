@@ -1327,8 +1327,9 @@ export function exportDashboardReportExcel(optionsOrDayInvoices, customSettings 
   let stockStartRow = -1;
   let stockEndRow = -1;
   let sHeaderRow = -1;
+  let sec4HeaderRow = -1;
   if (stockData && stockData.length > 0) {
-    const sec4HeaderRow = wsData.length;
+    sec4HeaderRow = wsData.length;
     wsData.push(['4. CURRENT GODOWN STOCK INVENTORY (PHYSICAL WAREHOUSE COUNT)']);
     merges.push({ s: { r: sec4HeaderRow, c: 0 }, e: { r: sec4HeaderRow, c: colCount - 1 } });
 
@@ -1372,8 +1373,9 @@ export function exportDashboardReportExcel(optionsOrDayInvoices, customSettings 
   let monthlyStartRow = -1;
   let monthlyEndRow = -1;
   let mHeaderRow = -1;
+  let sec5HeaderRow = -1;
   if (computedMonthly && computedMonthly.length > 0) {
-    const sec5HeaderRow = wsData.length;
+    sec5HeaderRow = wsData.length;
     wsData.push(['5. MONTHLY SALES VOLUME & REVENUE PERFORMANCE (FROM DASHBOARD CHARTS)']);
     merges.push({ s: { r: sec5HeaderRow, c: 0 }, e: { r: sec5HeaderRow, c: colCount - 1 } });
 
@@ -1424,8 +1426,9 @@ export function exportDashboardReportExcel(optionsOrDayInvoices, customSettings 
   let custSegStartRow = -1;
   let custSegEndRow = -1;
   let csHeaderRow = -1;
+  let sec6HeaderRow = -1;
   if (customerList.length > 0) {
-    const sec6HeaderRow = wsData.length;
+    sec6HeaderRow = wsData.length;
     wsData.push(['6. REGISTERED CUSTOMER BASE SEGMENTATION']);
     merges.push({ s: { r: sec6HeaderRow, c: 0 }, e: { r: sec6HeaderRow, c: colCount - 1 } });
 
@@ -1580,197 +1583,8 @@ export function exportDashboardReportExcel(optionsOrDayInvoices, customSettings 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws1, 'Dashboard Master');
 
-  // ─────────────────────────────────────────────────────────────
-  // SHEET 2: INVOICES & DELIVERIES DETAIL REGISTER
-  // ─────────────────────────────────────────────────────────────
-  const invWsData = [
-    [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()}`],
-    [`DELIVERY & INVOICE AUDIT REGISTER — ${formattedDate.toUpperCase()}`],
-    [`Generated: ${new Date().toLocaleString('en-IN')}  |  Day Revenue: ${formatCurrency(dayRevenue)}  |  Total Invoices: ${dayInvoices.length}`],
-    [],
-  ];
-
-  const invHeaders = [
-    'Invoice No', 'Type', 'Date', 'Customer Name', 'Items Summary', 'Cylinder Types',
-    'Filled Sold', 'Empty Collected', 'Empty Not Collected',
-    'Total (₹)', 'Paid (₹)', 'Balance (₹)', 'Payment Mode', 'Payment Status'
-  ];
-  invWsData.push(invHeaders);
-  const invStartRow = invWsData.length;
-
-  if (dayInvoices.length === 0) {
-    invWsData.push(['No transactions recorded for this date', '', '', '', '', '', 0, 0, 0, '₹0', '₹0', '₹0', '—', '—']);
-  } else {
-    dayInvoices.forEach(inv => {
-      const isEB = inv.invoiceType === 'Empty Bottle';
-      const cylTypes = [...new Set(inv.items.map(i => i.cylinderType))].join(', ');
-      const balance = inv.totalAmount - (Number(inv.paidAmount) || 0);
-
-      const filledSold = isEB ? 0 : inv.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
-      const emptyCollected = isEB
-        ? inv.items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
-        : inv.items.reduce((s, i) => s + (i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0)), 0);
-      const emptyNotCollected = isEB
-        ? 0
-        : inv.items.reduce((s, i) => {
-            const coll = i.emptyCount !== undefined ? Number(i.emptyCount) : (i.emptyCollected ? Number(i.qty) : 0);
-            return s + Math.max(0, (Number(i.qty) || 0) - coll);
-          }, 0);
-
-      invWsData.push([
-        inv.invoiceNumber,
-        isEB ? 'Empty Bottle' : 'Refill',
-        formatDate(inv.date),
-        inv.customerName,
-        inv.items.map(i => `${i.qty}×${i.cylinderType}`).join(', '),
-        cylTypes,
-        filledSold,
-        emptyCollected,
-        emptyNotCollected,
-        formatCurrency(inv.totalAmount),
-        formatCurrency(inv.paidAmount),
-        formatCurrency(balance),
-        inv.paymentMode,
-        inv.paymentStatus
-      ]);
-    });
-  }
-  const invEndRow = invWsData.length - 1;
-
-  invWsData.push([
-    '', '', '', '', 'GRAND TOTAL', '',
-    dayFilledSold, dayEmptyCollected, dayEmptyNotCollected,
-    formatCurrency(dayRevenue), formatCurrency(dayPaid), formatCurrency(dayOutstanding),
-    '', ''
-  ]);
-  const invTotalRow = invWsData.length - 1;
-
-  const ws2 = XLSX.utils.aoa_to_sheet(invWsData);
-  ws2['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 13 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 13 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 13 } },
-  ];
-  ws2['!cols'] = [
-    { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 22 },
-    { wch: 28 }, { wch: 16 }, { wch: 12 },
-    { wch: 16 }, { wch: 20 },
-    { wch: 14 }, { wch: 14 }, { wch: 14 },
-    { wch: 14 }, { wch: 14 }
-  ];
-
-  styleRow(ws2, 0, 0, 13, STYLES.title);
-  styleRow(ws2, 1, 0, 13, STYLES.subtitle);
-  styleRow(ws2, 2, 0, 13, STYLES.subtitle);
-  styleRow(ws2, 4, 0, 13, STYLES.header);
-
-  const invColStyles = ['bold', 'center', 'center', 'left', 'left', 'center', 'center', 'center', 'center', 'right', 'right', 'right', 'center', 'center'];
-  styleDataRows(ws2, invStartRow, invEndRow, 14, invColStyles);
-
-  for (let r = invStartRow; r <= invEndRow; r++) {
-    const isAlt = (r - invStartRow) % 2 === 1;
-    const notCollRef = XLSX.utils.encode_cell({ r, c: 8 });
-    if (ws2[notCollRef] && Number(ws2[notCollRef].v) > 0) {
-      ws2[notCollRef].s = STYLES.dangerCenter;
-    }
-    const collRef = XLSX.utils.encode_cell({ r, c: 7 });
-    if (ws2[collRef] && Number(ws2[collRef].v) > 0) {
-      ws2[collRef].s = STYLES.successCenter;
-    }
-    const statusRef = XLSX.utils.encode_cell({ r, c: 13 });
-    if (ws2[statusRef]) {
-      const val = String(ws2[statusRef].v || '').toLowerCase();
-      if (val === 'paid' || val === 'full') {
-        ws2[statusRef].s = isAlt ? { ...STYLES.altRowCenter, font: FONT.success, fill: { fgColor: { rgb: COLORS.successBg } } } : STYLES.successCenter;
-      } else if (val === 'unpaid' || val === 'pending') {
-        ws2[statusRef].s = isAlt ? { ...STYLES.altRowCenter, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } } : STYLES.dangerCenter;
-      } else if (val === 'partial') {
-        ws2[statusRef].s = STYLES.warningCell;
-      }
-    }
-  }
-  styleRow(ws2, invTotalRow, 0, 13, STYLES.totalLabel);
-
-  XLSX.utils.book_append_sheet(wb, ws2, 'Day Invoices Register');
-
-  // ─────────────────────────────────────────────────────────────
-  // SHEET 3: CUSTOMER OUTSTANDING BOTTLES & PAYMENT DUES
-  // ─────────────────────────────────────────────────────────────
-  if (customersWithPendingBottles.length > 0) {
-    const wsCustData = [
-      [`${(settings.agencyName || 'JAYDEEP INDIAN GAS AGENCY').toUpperCase()}`],
-      [`OUTSTANDING CUSTOMER EMPTY BOTTLES & PAYMENT DUES AUDIT REGISTER`],
-      [`Generated: ${new Date().toLocaleString('en-IN')}  |  Customers with Dues: ${customersWithPendingBottles.length}  |  Market Pending Bottles: ${grandAgencyPendingEmpty}`],
-      [],
-      ['Sr No', 'Customer Name', 'Phone Number', 'Customer Type', 'Delivery Address', '5kg Empties', '19kg Empties', '47.5kg Empties', 'Total Pending Empties', 'Pending Payment Due (₹)', 'Action Required'],
-    ];
-
-    const cStartRow = wsCustData.length;
-    customersWithPendingBottles.forEach((c, idx) => {
-      wsCustData.push([
-        idx + 1,
-        c.name,
-        c.phone,
-        c.type,
-        c.address,
-        c.net5,
-        c.net19,
-        c.net47,
-        c.totalPending,
-        formatCurrency(c.totalDue),
-        c.totalPending > 5 ? '🔴 Immediate Pickup' : c.totalDue > 0 ? '⚠️ Payment & Bottle Follow-up' : '🫙 Routine Collection'
-      ]);
-    });
-    const cEndRow = wsCustData.length - 1;
-
-    const totalCustDueSum = customersWithPendingBottles.reduce((s, c) => s + (c.totalDue || 0), 0);
-    wsCustData.push([
-      '', 'TOTAL OUTSTANDING DUES', '', '', '',
-      totalCustPending5kg, totalCustPending19kg, totalCustPending47kg,
-      grandAgencyPendingEmpty, formatCurrency(totalCustDueSum), 'Market Dues Total'
-    ]);
-    const cTotalRow = wsCustData.length - 1;
-
-    const ws3 = XLSX.utils.aoa_to_sheet(wsCustData);
-    ws3['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 10 } },
-    ];
-    ws3['!cols'] = [
-      { wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 28 },
-      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 22 }, { wch: 26 }
-    ];
-
-    styleRow(ws3, 0, 0, 10, STYLES.title);
-    styleRow(ws3, 1, 0, 10, STYLES.subtitle);
-    styleRow(ws3, 2, 0, 10, STYLES.subtitle);
-    styleRow(ws3, 4, 0, 10, STYLES.header);
-
-    const cStyles = ['center', 'bold', 'center', 'center', 'left', 'center', 'center', 'center', 'center', 'right', 'left'];
-    styleDataRows(ws3, cStartRow, cEndRow, 11, cStyles);
-
-    for (let r = cStartRow; r <= cEndRow; r++) {
-      const totRef = XLSX.utils.encode_cell({ r, c: 8 });
-      if (ws3[totRef] && Number(ws3[totRef].v) > 0) {
-        ws3[totRef].s = STYLES.dangerCenter;
-      }
-      const dueRef = XLSX.utils.encode_cell({ r, c: 9 });
-      if (ws3[dueRef]) {
-        const val = String(ws3[dueRef].v || '').replace(/[₹,]/g, '');
-        if (Number(val) > 0) {
-          ws3[dueRef].s = STYLES.danger;
-        }
-      }
-    }
-    styleRow(ws3, cTotalRow, 0, 10, STYLES.totalLabel);
-
-    XLSX.utils.book_append_sheet(wb, ws3, 'Customer Bottle Dues');
-  }
-
   saveWorkbook(wb, `${settings.invoicePrefix || 'JIG'}-Dashboard-Report-${dateKey}.xlsx`);
 }
 
 // Alias for backwards compatibility
 export const exportDashboardDayReportExcel = exportDashboardReportExcel;
-
