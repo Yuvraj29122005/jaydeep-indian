@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import Layout from './components/Layout';
+import GlobalLoadingModal from './components/GlobalLoadingModal';
 import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -65,6 +66,7 @@ export default function App() {
   return (
     <AppProvider>
       <BrowserRouter>
+        <GlobalLoadingModal />
         <AppRoutes />
       </BrowserRouter>
     </AppProvider>

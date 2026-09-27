@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { CYLINDER_TYPES, PAYMENT_MODES, defaultEmptyStock } from '../lib/constants';
@@ -11,6 +11,7 @@ const blankItem = (isEB = false) => ({
   emptyCount: isEB ? 1 : 0,
   itemType: isEB ? 'empty' : 'filled',
   isBottleOnly: isEB,
+  isNC: false, // New Connection flag
 });
 
 export default function CreateInvoice() {
@@ -31,6 +32,48 @@ export default function CreateInvoice() {
   const [privateNotes, setPrivateNotes] = useState('');
   const [paymentScreenshot, setPaymentScreenshot] = useState('');
   const [errors, setErrors] = useState({});
+
+  // Customer search states
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [customerInputMode, setCustomerInputMode] = useState('select'); // 'select' | 'manual'
+  const [manualCustomerName, setManualCustomerName] = useState('');
+  const customerSearchRef = useRef(null);
+  const customerDropdownRef = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(e.target) &&
+          customerSearchRef.current && !customerSearchRef.current.contains(e.target)) {
+        setShowCustomerDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter customers based on search
+  const filteredCustomers = customers.filter(c => {
+    const s = customerSearch.trim().toLowerCase();
+    if (!s) return true;
+    return (
+      c.name.toLowerCase().includes(s) ||
+      (c.phone || '').toLowerCase().includes(s) ||
+      (c.address || '').toLowerCase().includes(s)
+    );
+  });
+
+  const handleCustomerSelect = (customerId) => {
+    setSelectedCustomerId(customerId);
+    const cust = customers.find(c => c.id === customerId);
+    if (cust) {
+      setCustomerSearch(cust.name);
+      setManualCustomerName('');
+    }
+    setShowCustomerDropdown(false);
+    handleCustomerChange(customerId);
+  };
 
   // Handle URL query parameters for new invoices (e.g. ?type=empty&customer=123)
   useEffect(() => {
@@ -55,28 +98,32 @@ export default function CreateInvoice() {
       if (qCust) {
         setSelectedCustomerId(qCust);
         const cust = customers.find(c => c.id === qCust);
-        if (cust && isEB) {
-          const stock = cust.emptyBottleStock || defaultEmptyStock();
-          const pendingItems = [];
-          CYLINDER_TYPES.forEach(t => {
-            const s = stock[t] || { withCustomer: 0, collected: 0 };
-            const net = Math.max(0, s.withCustomer - s.collected);
-            if (net > 0) {
-              pendingItems.push({
-                cylinderType: t,
-                qty: net,
-                unitPrice: 0,
-                emptyCollected: true,
-                emptyCount: net,
-                itemType: 'empty',
-                isBottleOnly: true,
-              });
+        if (cust) {
+          setCustomerSearch(cust.name);
+          if (isEB) {
+            const stock = cust.emptyBottleStock || defaultEmptyStock();
+            const pendingItems = [];
+            CYLINDER_TYPES.forEach(t => {
+              const s = stock[t] || { withCustomer: 0, collected: 0 };
+              const net = Math.max(0, s.withCustomer - s.collected);
+              if (net > 0) {
+                pendingItems.push({
+                  cylinderType: t,
+                  qty: net,
+                  unitPrice: 0,
+                  emptyCollected: true,
+                  emptyCount: net,
+                  itemType: 'empty',
+                  isBottleOnly: true,
+                  isNC: false,
+                });
+              }
+            });
+            if (pendingItems.length > 0) {
+              setItems(pendingItems);
+            } else {
+              setItems([blankItem(true)]);
             }
-          });
-          if (pendingItems.length > 0) {
-            setItems(pendingItems);
-          } else {
-            setItems([blankItem(true)]);
           }
         }
       }
@@ -89,6 +136,8 @@ export default function CreateInvoice() {
       const inv = invoices.find(i => i.id === id);
       if (inv) {
         setSelectedCustomerId(inv.customerId);
+        const cust = customers.find(c => c.id === inv.customerId);
+        if (cust) setCustomerSearch(cust.name);
         setInvoiceType(inv.invoiceType || 'Standard');
         setInvoiceNumber(inv.invoiceNumber);
         setDate(inv.date);
@@ -98,6 +147,7 @@ export default function CreateInvoice() {
           emptyCount: item.emptyCount !== undefined ? item.emptyCount : (item.emptyCollected ? item.qty : 0),
           itemType: inv.invoiceType === 'Empty Bottle' ? 'empty' : (item.itemType || 'filled'),
           isBottleOnly: inv.invoiceType === 'Empty Bottle' || Boolean(item.isBottleOnly),
+          isNC: Boolean(item.isNC),
         })));
         setPaymentMode(inv.paymentMode);
         setPaidAmount(inv.paidAmount);
@@ -163,6 +213,7 @@ export default function CreateInvoice() {
           emptyCount: net,
           itemType: 'empty',
           isBottleOnly: true,
+          isNC: false,
         });
       }
     });
@@ -208,6 +259,15 @@ export default function CreateInvoice() {
       if (field === 'emptyCollected') {
         updated[idx].emptyCount = val ? (updated[idx].qty || 1) : 0;
       }
+      // NC toggle: if NC is enabled, the bottle is permanent (no empty collection needed)
+      if (field === 'isNC') {
+        updated[idx].isNC = val;
+        if (val) {
+          // NC bottles: no empty collection expected
+          updated[idx].emptyCollected = false;
+          updated[idx].emptyCount = 0;
+        }
+      }
       return updated;
     });
   };
@@ -239,7 +299,8 @@ export default function CreateInvoice() {
   const validate = () => {
     const errs = {};
     if (!invoiceNumber.trim()) errs.invoiceNumber = 'Invoice Number is required';
-    if (!selectedCustomerId) errs.customer = 'Please select a customer';
+    if (!selectedCustomerId && customerInputMode === 'select') errs.customer = 'Please select a customer';
+    if (!manualCustomerName.trim() && customerInputMode === 'manual') errs.customer = 'Please enter customer name';
     if (items.length === 0) errs.items = 'Add at least one item';
 
     items.forEach((item, idx) => {
@@ -274,10 +335,10 @@ export default function CreateInvoice() {
       invoiceNumber: invoiceNumber.trim(),
       invoiceType,
       date,
-      customerId: selectedCustomerId,
-      customerName: selectedCustomer.name,
-      customerPhone: selectedCustomer.phone,
-      customerAddress: selectedCustomer.address || '',
+      customerId: selectedCustomerId || 'manual',
+      customerName: selectedCustomer ? selectedCustomer.name : manualCustomerName.trim(),
+      customerPhone: selectedCustomer ? selectedCustomer.phone : '',
+      customerAddress: selectedCustomer ? (selectedCustomer.address || '') : '',
       items: items.map(item => {
         const itemQty = Number(item.qty) || 1;
         return {
@@ -285,10 +346,11 @@ export default function CreateInvoice() {
           cylinderType: item.cylinderType,
           qty: itemQty,
           unitPrice: Number(item.unitPrice) || 0,
-          emptyCollected: isEB ? true : Boolean(item.emptyCollected),
-          emptyCount: isEB ? itemQty : (Boolean(item.emptyCollected) ? (Number(item.emptyCount) || itemQty) : 0),
+          emptyCollected: item.isNC ? false : (isEB ? true : Boolean(item.emptyCollected)),
+          emptyCount: item.isNC ? 0 : (isEB ? itemQty : (Boolean(item.emptyCollected) ? (Number(item.emptyCount) || itemQty) : 0)),
           itemType: isEB ? 'empty' : 'filled',
           isBottleOnly: isEB,
+          isNC: Boolean(item.isNC),
         };
       }),
       totalAmount,
@@ -322,8 +384,15 @@ export default function CreateInvoice() {
   }, 0);
 
   const totalEmptyInInvoice = items.reduce((sum, item) => {
+    if (item.isNC) return sum; // NC bottles don't count as empty collection
     if (invoiceType === 'Empty Bottle') return sum + (Number(item.qty) || 0);
     if (item.emptyCollected) return sum + (Number(item.emptyCount) || Number(item.qty) || 0);
+    return sum;
+  }, 0);
+
+  // Count total NC bottles in this invoice
+  const totalNCBottles = items.reduce((sum, item) => {
+    if (item.isNC) return sum + (Number(item.qty) || 0);
     return sum;
   }, 0);
 
@@ -442,20 +511,141 @@ export default function CreateInvoice() {
                   />
                   {errors.invoiceNumber && <span className="text-danger" style={{ fontSize: '0.78rem' }}>{errors.invoiceNumber}</span>}
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Select Customer *</label>
-                  <select
-                    className="form-control"
-                    value={selectedCustomerId}
-                    onChange={e => handleCustomerChange(e.target.value)}
-                  >
-                    <option value="">-- Select Customer --</option>
-                    {customers.map(c => (
-                      <option key={c.id} value={c.id}>{c.name} — {c.phone}</option>
-                    ))}
-                  </select>
+
+                {/* Customer Input Mode Toggle */}
+                <div className="form-group full">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <label className="form-label" style={{ margin: 0 }}>Customer *</label>
+                    <div style={{
+                      display: 'flex', background: 'var(--bg-primary)', borderRadius: 6,
+                      border: '1px solid var(--border)', overflow: 'hidden', fontSize: '0.72rem'
+                    }}>
+                      <button
+                        type="button"
+                        onClick={() => { setCustomerInputMode('select'); setManualCustomerName(''); }}
+                        style={{
+                          padding: '4px 10px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                          background: customerInputMode === 'select' ? 'var(--accent)' : 'transparent',
+                          color: customerInputMode === 'select' ? '#fff' : 'var(--text-secondary)',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        🔍 Select
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setCustomerInputMode('manual'); setSelectedCustomerId(''); setCustomerSearch(''); }}
+                        style={{
+                          padding: '4px 10px', border: 'none', cursor: 'pointer', fontWeight: 600,
+                          background: customerInputMode === 'manual' ? 'var(--accent)' : 'transparent',
+                          color: customerInputMode === 'manual' ? '#fff' : 'var(--text-secondary)',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        ✏️ Manual
+                      </button>
+                    </div>
+                  </div>
+
+                  {customerInputMode === 'select' ? (
+                    <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{
+                          position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+                          fontSize: '0.9rem', pointerEvents: 'none', zIndex: 1
+                        }}>🔍</span>
+                        <input
+                          ref={customerSearchRef}
+                          className="form-control"
+                          type="text"
+                          placeholder="Search by name, phone, or address..."
+                          value={customerSearch}
+                          onChange={e => {
+                            setCustomerSearch(e.target.value);
+                            setShowCustomerDropdown(true);
+                            if (!e.target.value.trim()) {
+                              setSelectedCustomerId('');
+                            }
+                          }}
+                          onFocus={() => setShowCustomerDropdown(true)}
+                          style={{ paddingLeft: 34, fontWeight: selectedCustomer ? 700 : 400 }}
+                        />
+                        {selectedCustomer && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomerSearch('');
+                              setSelectedCustomerId('');
+                              setShowCustomerDropdown(true);
+                            }}
+                            style={{
+                              position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                              background: 'none', border: 'none', cursor: 'pointer',
+                              fontSize: '0.85rem', color: 'var(--text-muted)', padding: '4px'
+                            }}
+                            title="Clear selection"
+                          >✕</button>
+                        )}
+                      </div>
+
+                      {showCustomerDropdown && (
+                        <div ref={customerDropdownRef} style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0,
+                          background: '#fff', border: '1px solid var(--border)',
+                          borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                          maxHeight: 260, overflowY: 'auto', zIndex: 100, marginTop: 4
+                        }}>
+                          {filteredCustomers.length === 0 ? (
+                            <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                              No customers found matching "{customerSearch}"
+                            </div>
+                          ) : (
+                            filteredCustomers.map(c => (
+                              <div
+                                key={c.id}
+                                onClick={() => handleCustomerSelect(c.id)}
+                                style={{
+                                  padding: '10px 14px',
+                                  cursor: 'pointer',
+                                  borderBottom: '1px solid var(--border)',
+                                  background: selectedCustomerId === c.id ? 'var(--accent-light)' : 'transparent',
+                                  transition: 'background 0.15s',
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                onMouseLeave={e => e.currentTarget.style.background = selectedCustomerId === c.id ? 'var(--accent-light)' : 'transparent'}
+                              >
+                                <div>
+                                  <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                    {c.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                    📞 {c.phone} • {c.type}
+                                    {c.address && ` • 📍 ${c.address.substring(0, 40)}${c.address.length > 40 ? '...' : ''}`}
+                                  </div>
+                                </div>
+                                {selectedCustomerId === c.id && (
+                                  <span style={{ color: 'var(--success)', fontWeight: 700, fontSize: '0.85rem' }}>✓</span>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <input
+                      className="form-control"
+                      type="text"
+                      placeholder="Enter customer name manually..."
+                      value={manualCustomerName}
+                      onChange={e => setManualCustomerName(e.target.value)}
+                      style={{ fontWeight: 600 }}
+                    />
+                  )}
                   {errors.customer && <span className="text-danger" style={{ fontSize: '0.78rem' }}>{errors.customer}</span>}
                 </div>
+
                 <div className="form-group">
                   <label className="form-label">Invoice Date *</label>
                   <input className="form-control" type="date" value={date} onChange={e => setDate(e.target.value)} />
@@ -503,6 +693,24 @@ export default function CreateInvoice() {
                       </div>
                     </div>
                   </div>
+
+                  {/* NC Bottles info */}
+                  {selectedCustomer.ncBottles && (
+                    <div style={{ marginTop: 10, padding: 10, background: 'rgba(139,92,246,0.06)', borderRadius: 6, border: '1px solid rgba(139,92,246,0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed', marginBottom: 4 }}>
+                        🏠 NC (New Connection) Bottles — Permanently Owned
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: '0.75rem' }}>
+                        {CYLINDER_TYPES.map(t => {
+                          const nc = selectedCustomer.ncBottles?.[t] || 0;
+                          return nc > 0 ? <span key={t} className="badge" style={{ background: 'rgba(139,92,246,0.15)', color: '#7c3aed' }}>{t}: {nc}</span> : null;
+                        })}
+                        {CYLINDER_TYPES.every(t => !(selectedCustomer.ncBottles?.[t])) && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No NC bottles yet</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -522,7 +730,7 @@ export default function CreateInvoice() {
                 display: 'grid',
                 gridTemplateColumns: invoiceType === 'Empty Bottle'
                   ? '160px 140px 130px 110px 40px'
-                  : '150px 80px 140px 120px 140px 40px',
+                  : '130px 80px 120px 100px 80px 140px 40px',
                 gap: 10, marginBottom: 8,
                 fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600,
                 textTransform: 'uppercase', letterSpacing: '0.05em'
@@ -531,6 +739,7 @@ export default function CreateInvoice() {
                 <span>{invoiceType === 'Empty Bottle' ? 'Empty Bottles Collected' : 'Qty (Filled)'}</span>
                 <span>{invoiceType === 'Empty Bottle' ? 'Rate / Credit (₹)' : 'Unit Price (₹)'}</span>
                 <span>Amount</span>
+                {invoiceType === 'Standard' && <span>NC</span>}
                 {invoiceType === 'Standard' && <span>Empty Collected</span>}
                 <span></span>
               </div>
@@ -545,7 +754,7 @@ export default function CreateInvoice() {
                     display: 'grid',
                     gridTemplateColumns: invoiceType === 'Empty Bottle'
                       ? '160px 140px 130px 110px 40px'
-                      : '150px 80px 140px 120px 140px 40px',
+                      : '130px 80px 120px 100px 80px 140px 40px',
                     gap: 10, alignItems: 'center', marginBottom: 12
                   }}>
                     <select
@@ -606,32 +815,65 @@ export default function CreateInvoice() {
                       ₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}
                     </div>
 
+                    {/* NC Toggle for Standard Invoice */}
+                    {invoiceType === 'Standard' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <label className="checkbox-wrap" style={{ margin: 0 }} title="New Connection — bottle permanently belongs to customer, no empty return expected">
+                          <input
+                            type="checkbox"
+                            checked={item.isNC || false}
+                            onChange={e => updateItem(idx, 'isNC', e.target.checked)}
+                          />
+                          <span className="checkbox-label" style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            color: item.isNC ? '#7c3aed' : 'var(--text-muted)'
+                          }}>NC</span>
+                        </label>
+                        {item.isNC && (
+                          <span style={{
+                            fontSize: '0.6rem', color: '#7c3aed', fontWeight: 600,
+                            background: 'rgba(139,92,246,0.1)', padding: '1px 6px',
+                            borderRadius: 4, marginTop: 2
+                          }}>Permanent</span>
+                        )}
+                      </div>
+                    )}
+
                     {/* Empty Collected Checkbox for Standard Invoice */}
                     {invoiceType === 'Standard' && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <label className="checkbox-wrap" style={{ margin: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={item.emptyCollected}
-                            onChange={e => updateItem(idx, 'emptyCollected', e.target.checked)}
-                          />
-                          <span className="checkbox-label" style={{ fontSize: '0.8rem' }}>Collect Empty</span>
-                        </label>
-                        {item.emptyCollected && (
-                          <input
-                            className="form-control"
-                            type="number"
-                            min="0"
-                            value={item.emptyCount}
-                            onChange={e => updateItem(idx, 'emptyCount', e.target.value)}
-                            placeholder="Count"
-                            style={{ padding: '4px 8px', fontSize: '0.8rem', width: '80%' }}
-                          />
-                        )}
-                        {selectedCustomer && netCustPending > 0 && (
-                          <span style={{ fontSize: '0.68rem', color: 'var(--danger)' }}>
-                            Pending: {netCustPending}
+                        {item.isNC ? (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            No empty return
                           </span>
+                        ) : (
+                          <>
+                            <label className="checkbox-wrap" style={{ margin: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={item.emptyCollected}
+                                onChange={e => updateItem(idx, 'emptyCollected', e.target.checked)}
+                              />
+                              <span className="checkbox-label" style={{ fontSize: '0.8rem' }}>Collect Empty</span>
+                            </label>
+                            {item.emptyCollected && (
+                              <input
+                                className="form-control"
+                                type="number"
+                                min="0"
+                                value={item.emptyCount}
+                                onChange={e => updateItem(idx, 'emptyCount', e.target.value)}
+                                placeholder="Count"
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', width: '80%' }}
+                              />
+                            )}
+                            {selectedCustomer && netCustPending > 0 && (
+                              <span style={{ fontSize: '0.68rem', color: 'var(--danger)' }}>
+                                Pending: {netCustPending}
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -726,6 +968,7 @@ export default function CreateInvoice() {
                   <div className="total-row" key={idx} style={{ fontSize: '0.82rem' }}>
                     <span className="text-muted">
                       {item.qty}× {item.cylinderType} {invoiceType === 'Empty Bottle' ? '(Empty)' : ''}
+                      {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700 }}> [NC]</span>}
                     </span>
                     <span>₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</span>
                   </div>
@@ -755,15 +998,22 @@ export default function CreateInvoice() {
                   🫙 Bottle Collection Impact:
                 </div>
                 {items.map((item, idx) => {
-                  const emptyCount = invoiceType === 'Empty Bottle'
-                    ? (Number(item.qty) || 0)
-                    : (item.emptyCollected ? (Number(item.emptyCount) || Number(item.qty) || 0) : 0);
+                  const emptyCount = item.isNC ? 0 : (
+                    invoiceType === 'Empty Bottle'
+                      ? (Number(item.qty) || 0)
+                      : (item.emptyCollected ? (Number(item.emptyCount) || Number(item.qty) || 0) : 0)
+                  );
 
                   return (
                     <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
-                      <span>{item.cylinderType}</span>
                       <span>
-                        {emptyCount > 0 ? (
+                        {item.cylinderType}
+                        {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700, marginLeft: 4 }}>[NC]</span>}
+                      </span>
+                      <span>
+                        {item.isNC ? (
+                          <strong style={{ color: '#7c3aed' }}>🏠 Permanent (no return)</strong>
+                        ) : emptyCount > 0 ? (
                           <strong style={{ color: 'var(--success)' }}>✅ Collect {emptyCount}</strong>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>— No empty collected</span>
@@ -776,6 +1026,12 @@ export default function CreateInvoice() {
                   <span>Total Empty Collected:</span>
                   <span style={{ color: 'var(--success)' }}>{totalEmptyInInvoice} bottles</span>
                 </div>
+                {totalNCBottles > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700, marginTop: 4 }}>
+                    <span>🏠 NC Bottles (Permanent):</span>
+                    <span style={{ color: '#7c3aed' }}>{totalNCBottles} bottles</span>
+                  </div>
+                )}
               </div>
 
               <button

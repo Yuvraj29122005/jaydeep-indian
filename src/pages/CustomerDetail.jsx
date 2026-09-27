@@ -180,6 +180,14 @@ export default function CustomerDetail() {
     return sum + Math.max(0, s.withCustomer - s.collected);
   }, 0);
 
+  // NC (New Connection) permanent bottles owned by customer
+  const ncBottles = customer.ncBottles || {
+    '5kg': 0,
+    '19kg': 0,
+    '47.5kg': 0,
+  };
+  const totalNCBottles = CYLINDER_TYPES.reduce((sum, t) => sum + (ncBottles[t] || 0), 0);
+
   return (
     <div className="page">
       <div className="page-header">
@@ -297,6 +305,52 @@ export default function CustomerDetail() {
                       minWidth: 50, textAlign: 'center'
                     }}>
                       {Math.max(0, net)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* NC Permanent Bottles Card */}
+        <div className="card" style={{
+          border: totalNCBottles > 0 ? '2px solid #8b5cf6' : '2px solid var(--border)',
+          background: totalNCBottles > 0 ? 'rgba(139,92,246,0.04)' : 'var(--bg-primary)',
+          marginBottom: 0
+        }}>
+          <div className="card-header" style={{ borderBottom: totalNCBottles > 0 ? '1px solid rgba(139,92,246,0.2)' : '1px solid var(--border)' }}>
+            <span className="card-title">🔥 NC Permanent Bottles</span>
+            {totalNCBottles > 0 ? (
+              <span className="badge" style={{ fontSize: '1rem', fontWeight: 700, padding: '6px 16px', background: '#8b5cf6', color: '#fff' }}>
+                {totalNCBottles} NC bottles
+              </span>
+            ) : (
+              <span className="badge badge-muted" style={{ fontSize: '0.9rem', fontWeight: 600, padding: '6px 14px' }}>
+                0 NC bottles
+              </span>
+            )}
+          </div>
+          <div className="card-body">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 16 }}>
+              {CYLINDER_TYPES.map(type => {
+                const count = ncBottles[type] || 0;
+                return (
+                  <div key={type} style={{
+                    padding: 16,
+                    borderRadius: 10,
+                    background: 'var(--bg-primary)',
+                    border: '1px solid rgba(139,92,246,0.3)',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {CYL_ICONS[type]} {type}
+                    </div>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#8b5cf6' }}>
+                      {count}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Permanent (No return)
                     </div>
                   </div>
                 );

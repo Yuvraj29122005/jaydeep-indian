@@ -1023,6 +1023,8 @@ export async function resetAllData() {
 
 const LOCAL_USERS_KEY = 'jig_app_users';
 
+export const SUPER_ADMIN_PASSWORD = 'Hiren@2311';
+
 export const SUPER_ADMIN_USER = {
   id: 'super-admin-01',
   username: 'admin',
@@ -1192,7 +1194,7 @@ export async function authenticateUser(identifier, password) {
   // 1. Check Super Admin
   if (
     (cleanId === 'jaydeepindian01@gmail.com' || cleanId === 'admin') &&
-    cleanPw === 'Jaydeep@1234'
+    cleanPw === SUPER_ADMIN_PASSWORD
   ) {
     return SUPER_ADMIN_USER;
   }

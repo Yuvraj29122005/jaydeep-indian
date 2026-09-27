@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import * as db from '../lib/database';
 import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS } from '../lib/constants';
 
@@ -38,9 +38,55 @@ export function AppProvider({ children }) {
   const [agencySettingsMeta, setAgencySettingsMeta] = useState({ syncedWithSupabase: false });
   const [appUsers, setAppUsers] = useState([]);
 
-  // Loading & error states
+  // Data loading & error states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // ==================== GLOBAL PROCESS LOADING MODAL STATE ====================
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalLoadingMessage, setGlobalLoadingMessage] = useState('Please wait...');
+  const [globalLoadingSubtext, setGlobalLoadingSubtext] = useState('');
+  const loadingCountRef = useRef(0);
+
+  const showLoading = useCallback((message = 'Please wait...', subtext = '') => {
+    loadingCountRef.current += 1;
+    setGlobalLoadingMessage(message);
+    setGlobalLoadingSubtext(subtext);
+    setGlobalLoading(true);
+  }, []);
+
+  const hideLoading = useCallback(() => {
+    loadingCountRef.current = Math.max(0, loadingCountRef.current - 1);
+    if (loadingCountRef.current === 0) {
+      setGlobalLoading(false);
+    }
+  }, []);
+
+  const forceHideLoading = useCallback(() => {
+    loadingCountRef.current = 0;
+    setGlobalLoading(false);
+  }, []);
+
+  const withLoading = useCallback(async (asyncFn, message = 'Please wait...', subtext = '') => {
+    showLoading(message, subtext);
+    try {
+      return await asyncFn();
+    } finally {
+      hideLoading();
+    }
+  }, [showLoading, hideLoading]);
+
+  // Window bridge for direct access anywhere in scripts/components
+  useEffect(() => {
+    window.showAppLoading = showLoading;
+    window.hideAppLoading = hideLoading;
+    window.forceHideAppLoading = forceHideLoading;
+    return () => {
+      delete window.showAppLoading;
+      delete window.hideAppLoading;
+      delete window.forceHideAppLoading;
+    };
+  }, [showLoading, hideLoading, forceHideLoading]);
 
   // Persist login state
   useEffect(() => {
@@ -57,6 +103,7 @@ export function AppProvider({ children }) {
       return;
     }
     setLoading(true);
+    showLoading('Loading Jaydeep Indian Gas...', 'Connecting to database and fetching records');
     setError(null);
     try {
       const [
@@ -100,8 +147,9 @@ export function AppProvider({ children }) {
       setError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
+      hideLoading();
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, showLoading, hideLoading]);
 
   useEffect(() => {
     loadAllData();
@@ -110,22 +158,24 @@ export function AppProvider({ children }) {
   // ==================== AUTH & PERMISSIONS ====================
 
   const login = async (identifier, password) => {
-    try {
-      const user = await db.authenticateUser(identifier, password);
-      if (user) {
-        setCurrentUser(user);
-        setIsLoggedIn(true);
-        localStorage.setItem('jig_logged_in', 'true');
-        localStorage.setItem('jig_current_user', JSON.stringify(user));
-        return { success: true, user };
+    return withLoading(async () => {
+      try {
+        const user = await db.authenticateUser(identifier, password);
+        if (user) {
+          setCurrentUser(user);
+          setIsLoggedIn(true);
+          localStorage.setItem('jig_logged_in', 'true');
+          localStorage.setItem('jig_current_user', JSON.stringify(user));
+          return { success: true, user };
+        }
+        return { success: false, error: 'Invalid username or password.' };
+      } catch (err) {
+        if (err.message === 'ACCOUNT_INACTIVE') {
+          return { success: false, error: 'This account has been deactivated by the admin.' };
+        }
+        return { success: false, error: err.message || 'Login failed.' };
       }
-      return { success: false, error: 'Invalid username or password.' };
-    } catch (err) {
-      if (err.message === 'ACCOUNT_INACTIVE') {
-        return { success: false, error: 'This account has been deactivated by the admin.' };
-      }
-      return { success: false, error: err.message || 'Login failed.' };
-    }
+    }, 'Verifying Credentials...', 'Signing in to admin portal');
   };
 
   const logout = () => {
@@ -152,79 +202,91 @@ export function AppProvider({ children }) {
   // ==================== USER MANAGEMENT ====================
 
   const createAppUser = async (userData) => {
-    try {
-      const created = await db.insertAppUser(userData);
-      setAppUsers(prev => [created, ...prev.filter(u => u.id !== created.id)]);
-      return created;
-    } catch (err) {
-      console.error('Failed to create user:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const created = await db.insertAppUser(userData);
+        setAppUsers(prev => [created, ...prev.filter(u => u.id !== created.id)]);
+        return created;
+      } catch (err) {
+        console.error('Failed to create user:', err);
+        throw err;
+      }
+    }, 'Creating User...', 'Saving user credentials & role');
   };
 
   const updateAppUser = async (id, updates) => {
-    try {
-      const updated = await db.patchAppUser(id, updates);
-      setAppUsers(prev => prev.map(u => u.id === id ? updated : u));
-      if (currentUser?.id === id) {
-        const newCur = { ...currentUser, ...updated };
-        setCurrentUser(newCur);
-        localStorage.setItem('jig_current_user', JSON.stringify(newCur));
+    return withLoading(async () => {
+      try {
+        const updated = await db.patchAppUser(id, updates);
+        setAppUsers(prev => prev.map(u => u.id === id ? updated : u));
+        if (currentUser?.id === id) {
+          const newCur = { ...currentUser, ...updated };
+          setCurrentUser(newCur);
+          localStorage.setItem('jig_current_user', JSON.stringify(newCur));
+        }
+        return updated;
+      } catch (err) {
+        console.error('Failed to update user:', err);
+        throw err;
       }
-      return updated;
-    } catch (err) {
-      console.error('Failed to update user:', err);
-      throw err;
-    }
+    }, 'Updating User...', 'Applying account changes');
   };
 
   const deleteAppUser = async (id) => {
-    try {
-      await db.removeAppUser(id);
-      setAppUsers(prev => prev.filter(u => u.id !== id));
-    } catch (err) {
-      console.error('Failed to delete user:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        await db.removeAppUser(id);
+        setAppUsers(prev => prev.filter(u => u.id !== id));
+      } catch (err) {
+        console.error('Failed to delete user:', err);
+        throw err;
+      }
+    }, 'Deleting User...', 'Removing user from system');
   };
 
   // ==================== CUSTOMERS ====================
 
   const addCustomer = async (customer) => {
-    try {
-      const newCust = await db.insertCustomer({
-        ...customer,
-        bottleBalance: customer.bottleBalance || defaultBottleBalance(),
-      });
-      setCustomers(prev => [...prev, newCust]);
-      return newCust;
-    } catch (err) {
-      console.error('Failed to add customer:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const newCust = await db.insertCustomer({
+          ...customer,
+          bottleBalance: customer.bottleBalance || defaultBottleBalance(),
+        });
+        setCustomers(prev => [...prev, newCust]);
+        return newCust;
+      } catch (err) {
+        console.error('Failed to add customer:', err);
+        throw err;
+      }
+    }, 'Saving Customer...', 'Adding new customer to database');
   };
 
   const updateCustomer = async (id, updated) => {
-    try {
-      const updatedCust = await db.patchCustomer(id, updated);
-      setCustomers(prev => prev.map(c => c.id === id ? updatedCust : c));
-    } catch (err) {
-      console.error('Failed to update customer:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const updatedCust = await db.patchCustomer(id, updated);
+        setCustomers(prev => prev.map(c => c.id === id ? updatedCust : c));
+      } catch (err) {
+        console.error('Failed to update customer:', err);
+        throw err;
+      }
+    }, 'Updating Customer...', 'Saving customer changes');
   };
 
   const deleteCustomer = async (id) => {
-    try {
-      await db.removeCustomer(id);
-      setCustomers(prev => prev.filter(c => c.id !== id));
-    } catch (err) {
-      console.error('Failed to delete customer:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        await db.removeCustomer(id);
+        setCustomers(prev => prev.filter(c => c.id !== id));
+      } catch (err) {
+        console.error('Failed to delete customer:', err);
+        throw err;
+      }
+    }, 'Deleting Customer...', 'Removing record from database');
   };
 
-  const defaultBottleBalance = () => ({
+  const defaultBottleBalanceHelper = () => ({
     '5kg': { filledGiven: 0, emptyCollected: 0 },
     '19kg': { filledGiven: 0, emptyCollected: 0 },
     '47.5kg': { filledGiven: 0, emptyCollected: 0 },
@@ -234,7 +296,7 @@ export function AppProvider({ children }) {
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return;
 
-    const bal = JSON.parse(JSON.stringify(customer.bottleBalance || defaultBottleBalance()));
+    const bal = JSON.parse(JSON.stringify(customer.bottleBalance || defaultBottleBalanceHelper()));
     const stock = JSON.parse(JSON.stringify(customer.emptyBottleStock || defaultEmptyStock()));
 
     CYLINDER_TYPES.forEach(t => {
@@ -287,16 +349,18 @@ export function AppProvider({ children }) {
   // ==================== EMPTY BOTTLE STOCK ====================
 
   const updateEmptyBottleStock = async (customerId, newStock) => {
-    try {
-      const updatedCustomer = await db.patchCustomer(customerId, { emptyBottleStock: newStock });
-      setCustomers(prev => prev.map(c =>
-        c.id === customerId ? updatedCustomer : c
-      ));
-      return updatedCustomer;
-    } catch (err) {
-      console.error('Failed to update empty bottle stock:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const updatedCustomer = await db.patchCustomer(customerId, { emptyBottleStock: newStock });
+        setCustomers(prev => prev.map(c =>
+          c.id === customerId ? updatedCustomer : c
+        ));
+        return updatedCustomer;
+      } catch (err) {
+        console.error('Failed to update empty bottle stock:', err);
+        throw err;
+      }
+    }, 'Updating Empty Stock...', 'Saving customer bottle balance');
   };
 
   // ==================== STOCK ====================
@@ -321,22 +385,24 @@ export function AppProvider({ children }) {
   };
 
   const addStockManual = async (cylinderType, filledAdd, emptyAdd) => {
-    const s = stock.find(st => st.cylinderType === cylinderType);
-    if (!s) return;
+    return withLoading(async () => {
+      const s = stock.find(st => st.cylinderType === cylinderType);
+      if (!s) return;
 
-    const newFilled = s.filledCount + Number(filledAdd);
-    const newEmpty = s.emptyCount + Number(emptyAdd);
+      const newFilled = s.filledCount + Number(filledAdd);
+      const newEmpty = s.emptyCount + Number(emptyAdd);
 
-    try {
-      await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
-      setStock(prev => prev.map(st =>
-        st.cylinderType === cylinderType
-          ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
-          : st
-      ));
-    } catch (err) {
-      console.error('Failed to add stock:', err);
-    }
+      try {
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+        setStock(prev => prev.map(st =>
+          st.cylinderType === cylinderType
+            ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
+            : st
+        ));
+      } catch (err) {
+        console.error('Failed to add stock:', err);
+      }
+    }, 'Updating Warehouse Stock...', 'Adjusting cylinder quantities');
   };
 
   const getStockByType = (type) => stock.find(s => s.cylinderType === type) || { filledCount: 0, emptyCount: 0 };
@@ -344,259 +410,317 @@ export function AppProvider({ children }) {
   // ==================== INVOICES ====================
 
   const createInvoice = async (invoiceData) => {
-    try {
-      const isEB = invoiceData.invoiceType === 'Empty Bottle';
-      const defaultPrefix = isEB ? 'EB' : 'JIG';
-      const invoiceNumber = invoiceData.invoiceNumber || `${defaultPrefix}-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`;
-      
-      const newInvoice = await db.insertInvoice({
-        ...invoiceData,
-        invoiceNumber,
-      });
+    return withLoading(async () => {
+      try {
+        const isEB = invoiceData.invoiceType === 'Empty Bottle';
+        const defaultPrefix = isEB ? 'EB' : 'JIG';
+        const invoiceNumber = invoiceData.invoiceNumber || `${defaultPrefix}-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`;
+        
+        const newInvoice = await db.insertInvoice({
+          ...invoiceData,
+          invoiceNumber,
+        });
 
-      setInvoices(prev => [...prev, newInvoice]);
+        setInvoices(prev => [...prev, newInvoice]);
 
-      // Calculate deltas for customer and update agency warehouse stock
-      if (invoiceData.items && invoiceData.customerId) {
-        const customerDeltas = {};
+        // Calculate deltas for customer and update agency warehouse stock
+        if (invoiceData.items && invoiceData.customerId && invoiceData.customerId !== 'manual') {
+          const customerDeltas = {};
+          const ncBottleDeltas = {}; // Track NC bottle additions
 
-        for (const item of invoiceData.items) {
-          const type = item.cylinderType;
-          const isItemEmpty = isEB || item.itemType === 'empty' || item.isBottleOnly;
-          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-          const emptyGain = isItemEmpty 
-            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+          for (const item of invoiceData.items) {
+            const type = item.cylinderType;
+            const isItemEmpty = isEB || item.itemType === 'empty' || item.isBottleOnly;
+            const isNC = Boolean(item.isNC);
 
-          // Update warehouse agency stock
-          await updateStock(type, -filledQty, emptyGain);
+            if (isNC) {
+              // NC bottles: deduct from filled stock but do NOT add to empty pending
+              const filledQty = Number(item.qty) || 0;
+              await updateStock(type, -filledQty, 0);
 
-          if (!customerDeltas[type]) {
-            customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              // Track NC bottles for the customer
+              if (!ncBottleDeltas[type]) ncBottleDeltas[type] = 0;
+              ncBottleDeltas[type] += filledQty;
+
+              // Still count as filled given but NOT as withCustomer (no empty expected)
+              if (!customerDeltas[type]) {
+                customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              customerDeltas[type].filledDelta += filledQty;
+              // withCustomerDelta stays 0 for NC - no empty return expected
+            } else {
+              const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+              const emptyGain = isItemEmpty 
+                ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+                : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+              // Update warehouse agency stock
+              await updateStock(type, -filledQty, emptyGain);
+
+              if (!customerDeltas[type]) {
+                customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              customerDeltas[type].filledDelta += filledQty;
+              customerDeltas[type].withCustomerDelta += filledQty;
+              customerDeltas[type].emptyCollectedDelta += emptyGain;
+            }
           }
-          customerDeltas[type].filledDelta += filledQty;
-          customerDeltas[type].withCustomerDelta += filledQty;
-          customerDeltas[type].emptyCollectedDelta += emptyGain;
+
+          // Atomically sync customer status (both empty and filled)
+          await applyInvoiceBottleChangesToCustomer(invoiceData.customerId, customerDeltas);
+
+          // Update NC bottles on customer record
+          if (Object.keys(ncBottleDeltas).length > 0) {
+            const customer = customers.find(c => c.id === invoiceData.customerId);
+            if (customer) {
+              const currentNC = { ...(customer.ncBottles || {}) };
+              CYLINDER_TYPES.forEach(t => {
+                if (ncBottleDeltas[t]) {
+                  currentNC[t] = (currentNC[t] || 0) + ncBottleDeltas[t];
+                }
+              });
+              await db.patchCustomer(invoiceData.customerId, { ncBottles: currentNC });
+              setCustomers(prev => prev.map(c => c.id === invoiceData.customerId ? { ...c, ncBottles: currentNC } : c));
+            }
+          }
         }
 
-        // Atomically sync customer status (both empty and filled)
-        await applyInvoiceBottleChangesToCustomer(invoiceData.customerId, customerDeltas);
+        return newInvoice;
+      } catch (err) {
+        console.error('Failed to create invoice:', err);
+        throw err;
       }
-
-      return newInvoice;
-    } catch (err) {
-      console.error('Failed to create invoice:', err);
-      throw err;
-    }
+    }, 'Generating & Saving Invoice...', 'Updating inventory and customer accounts');
   };
 
   const updateInvoice = async (id, updates) => {
-    try {
-      const updatedInv = await db.patchInvoice(id, updates);
-      setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
-    } catch (err) {
-      console.error('Failed to update invoice:', err);
-    }
+    return withLoading(async () => {
+      try {
+        const updatedInv = await db.patchInvoice(id, updates);
+        setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
+      } catch (err) {
+        console.error('Failed to update invoice:', err);
+      }
+    }, 'Updating Invoice...', 'Saving changes');
   };
 
   const editInvoiceFull = async (id, updates) => {
-    const oldInv = invoices.find(i => i.id === id);
-    if (!oldInv) return;
+    return withLoading(async () => {
+      const oldInv = invoices.find(i => i.id === id);
+      if (!oldInv) return;
 
-    try {
-      const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
-      const newIsEB = updates.invoiceType === 'Empty Bottle' || (updates.invoiceType === undefined && oldIsEB);
+      try {
+        const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
+        const newIsEB = updates.invoiceType === 'Empty Bottle' || (updates.invoiceType === undefined && oldIsEB);
 
-      // Revert old items from warehouse stock and old customer
-      if (oldInv.items && oldInv.customerId) {
-        const revertDeltas = {};
-        for (const item of oldInv.items) {
-          const type = item.cylinderType;
-          const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
-          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-          const emptyGain = isItemEmpty 
-            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+        // Revert old items from warehouse stock and old customer
+        if (oldInv.items && oldInv.customerId) {
+          const revertDeltas = {};
+          for (const item of oldInv.items) {
+            const type = item.cylinderType;
+            const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
+            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+            const emptyGain = isItemEmpty 
+              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
 
-          await updateStock(type, filledQty, -emptyGain);
+            await updateStock(type, filledQty, -emptyGain);
 
-          if (!revertDeltas[type]) {
-            revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            if (!revertDeltas[type]) {
+              revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            }
+            revertDeltas[type].filledDelta -= filledQty;
+            revertDeltas[type].withCustomerDelta -= filledQty;
+            revertDeltas[type].emptyCollectedDelta -= emptyGain;
           }
-          revertDeltas[type].filledDelta -= filledQty;
-          revertDeltas[type].withCustomerDelta -= filledQty;
-          revertDeltas[type].emptyCollectedDelta -= emptyGain;
+          await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
         }
-        await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
-      }
 
-      // Apply new items to warehouse stock and new/updated customer
-      const targetCustomerId = updates.customerId || oldInv.customerId;
-      const targetItems = updates.items || oldInv.items;
+        // Apply new items to warehouse stock and new/updated customer
+        const targetCustomerId = updates.customerId || oldInv.customerId;
+        const targetItems = updates.items || oldInv.items;
 
-      if (targetItems && targetCustomerId) {
-        const applyDeltas = {};
-        for (const item of targetItems) {
-          const type = item.cylinderType;
-          const isItemEmpty = newIsEB || item.itemType === 'empty' || item.isBottleOnly;
-          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-          const emptyGain = isItemEmpty 
-            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+        if (targetItems && targetCustomerId) {
+          const applyDeltas = {};
+          for (const item of targetItems) {
+            const type = item.cylinderType;
+            const isItemEmpty = newIsEB || item.itemType === 'empty' || item.isBottleOnly;
+            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+            const emptyGain = isItemEmpty 
+              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
 
-          await updateStock(type, -filledQty, emptyGain);
+            await updateStock(type, -filledQty, emptyGain);
 
-          if (!applyDeltas[type]) {
-            applyDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            if (!applyDeltas[type]) {
+              applyDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            }
+            applyDeltas[type].filledDelta += filledQty;
+            applyDeltas[type].withCustomerDelta += filledQty;
+            applyDeltas[type].emptyCollectedDelta += emptyGain;
           }
-          applyDeltas[type].filledDelta += filledQty;
-          applyDeltas[type].withCustomerDelta += filledQty;
-          applyDeltas[type].emptyCollectedDelta += emptyGain;
+          await applyInvoiceBottleChangesToCustomer(targetCustomerId, applyDeltas);
         }
-        await applyInvoiceBottleChangesToCustomer(targetCustomerId, applyDeltas);
-      }
 
-      const updatedInv = await db.patchInvoice(id, updates);
-      setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
-      return updatedInv;
-    } catch (err) {
-      console.error('Failed to edit invoice:', err);
-      throw err;
-    }
+        const updatedInv = await db.patchInvoice(id, updates);
+        setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
+        return updatedInv;
+      } catch (err) {
+        console.error('Failed to edit invoice:', err);
+        throw err;
+      }
+    }, 'Updating Invoice...', 'Synchronizing inventory and customer accounts');
   };
 
   const deleteInvoice = async (id) => {
-    const oldInv = invoices.find(i => i.id === id);
-    if (!oldInv) return;
+    return withLoading(async () => {
+      const oldInv = invoices.find(i => i.id === id);
+      if (!oldInv) return;
 
-    try {
-      const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
-      if (oldInv.items && oldInv.customerId) {
-        const revertDeltas = {};
-        for (const item of oldInv.items) {
-          const type = item.cylinderType;
-          const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
-          const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-          const emptyGain = isItemEmpty 
-            ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-            : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+      try {
+        const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
+        if (oldInv.items && oldInv.customerId) {
+          const revertDeltas = {};
+          for (const item of oldInv.items) {
+            const type = item.cylinderType;
+            const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
+            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+            const emptyGain = isItemEmpty 
+              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
 
-          await updateStock(type, filledQty, -emptyGain);
+            await updateStock(type, filledQty, -emptyGain);
 
-          if (!revertDeltas[type]) {
-            revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            if (!revertDeltas[type]) {
+              revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+            }
+            revertDeltas[type].filledDelta -= filledQty;
+            revertDeltas[type].withCustomerDelta -= filledQty;
+            revertDeltas[type].emptyCollectedDelta -= emptyGain;
           }
-          revertDeltas[type].filledDelta -= filledQty;
-          revertDeltas[type].withCustomerDelta -= filledQty;
-          revertDeltas[type].emptyCollectedDelta -= emptyGain;
+          await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
         }
-        await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
+
+        await db.removeInvoice(id);
+        setInvoices(prev => prev.filter(inv => inv.id !== id));
+      } catch (err) {
+        console.error('Failed to delete invoice:', err);
+        throw err;
       }
-
-      await db.removeInvoice(id);
-      setInvoices(prev => prev.filter(inv => inv.id !== id));
-    } catch (err) {
-      console.error('Failed to delete invoice:', err);
-      throw err;
-    }
+    }, 'Deleting Invoice...', 'Reverting stock & customer balances');
   };
-
 
   // ==================== EXPENSES ====================
 
   const addExpense = async (expenseData) => {
-    try {
-      const newExpense = await db.insertExpense(expenseData);
-      setExpenses(prev => [...prev, newExpense]);
-      return newExpense;
-    } catch (err) {
-      console.error('Failed to add expense:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const newExpense = await db.insertExpense(expenseData);
+        setExpenses(prev => [...prev, newExpense]);
+        return newExpense;
+      } catch (err) {
+        console.error('Failed to add expense:', err);
+        throw err;
+      }
+    }, 'Saving Expense...', 'Recording expense transaction');
   };
 
   const updateExpense = async (id, updated) => {
-    try {
-      const updatedExp = await db.patchExpense(id, updated);
-      setExpenses(prev => prev.map(e => e.id === id ? updatedExp : e));
-    } catch (err) {
-      console.error('Failed to update expense:', err);
-    }
+    return withLoading(async () => {
+      try {
+        const updatedExp = await db.patchExpense(id, updated);
+        setExpenses(prev => prev.map(e => e.id === id ? updatedExp : e));
+      } catch (err) {
+        console.error('Failed to update expense:', err);
+      }
+    }, 'Updating Expense...', 'Saving changes');
   };
 
   const deleteExpense = async (id) => {
-    try {
-      await db.removeExpense(id);
-      setExpenses(prev => prev.filter(e => e.id !== id));
-    } catch (err) {
-      console.error('Failed to delete expense:', err);
-    }
+    return withLoading(async () => {
+      try {
+        await db.removeExpense(id);
+        setExpenses(prev => prev.filter(e => e.id !== id));
+      } catch (err) {
+        console.error('Failed to delete expense:', err);
+      }
+    }, 'Deleting Expense...', 'Removing expense record');
   };
 
   // ==================== REFILL TRIPS ====================
 
   const sendForRefill = async (cylinderType, emptyCount) => {
-    try {
-      await updateStock(cylinderType, 0, -emptyCount);
-      const newTrip = await db.insertRefillTrip({
-        cylinderType,
-        emptySentCount: emptyCount,
-      });
-      setRefillTrips(prev => [newTrip, ...prev]);
-    } catch (err) {
-      console.error('Failed to send for refill:', err);
-    }
+    return withLoading(async () => {
+      try {
+        await updateStock(cylinderType, 0, -emptyCount);
+        const newTrip = await db.insertRefillTrip({
+          cylinderType,
+          emptySentCount: emptyCount,
+        });
+        setRefillTrips(prev => [newTrip, ...prev]);
+      } catch (err) {
+        console.error('Failed to send for refill:', err);
+      }
+    }, 'Dispatching Refill Trip...', 'Deducting empty cylinders from stock');
   };
 
   const returnFromRefill = async (tripId, filledCount) => {
-    const trip = refillTrips.find(t => t.id === tripId);
-    if (!trip) return;
+    return withLoading(async () => {
+      const trip = refillTrips.find(t => t.id === tripId);
+      if (!trip) return;
 
-    try {
-      await updateStock(trip.cylinderType, filledCount, 0);
-      const updatedTrip = await db.patchRefillTrip(tripId, {
-        status: 'Returned',
-        filledReturnedCount: filledCount,
-        dateReturned: new Date().toISOString(),
-      });
-      setRefillTrips(prev => prev.map(t => t.id === tripId ? updatedTrip : t));
-    } catch (err) {
-      console.error('Failed to return from refill:', err);
-    }
+      try {
+        await updateStock(trip.cylinderType, filledCount, 0);
+        const updatedTrip = await db.patchRefillTrip(tripId, {
+          status: 'Returned',
+          filledReturnedCount: filledCount,
+          dateReturned: new Date().toISOString(),
+        });
+        setRefillTrips(prev => prev.map(t => t.id === tripId ? updatedTrip : t));
+      } catch (err) {
+        console.error('Failed to return from refill:', err);
+      }
+    }, 'Receiving Refill Return...', 'Adding filled cylinders to stock');
   };
 
   // ==================== PERSONAL NOTES ====================
 
   const addNote = async (noteData) => {
-    try {
-      const newNote = await db.insertNote(noteData);
-      setNotes(prev => [newNote, ...prev]);
-      return newNote;
-    } catch (err) {
-      console.error('Failed to add note:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const newNote = await db.insertNote(noteData);
+        setNotes(prev => [newNote, ...prev]);
+        return newNote;
+      } catch (err) {
+        console.error('Failed to add note:', err);
+        throw err;
+      }
+    }, 'Saving Note...', 'Storing note content');
   };
 
   const updateNote = async (id, updates) => {
-    try {
-      const updatedNote = await db.patchNote(id, updates);
-      setNotes(prev => prev.map(n => n.id === id ? updatedNote : n));
-      return updatedNote;
-    } catch (err) {
-      console.error('Failed to update note:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const updatedNote = await db.patchNote(id, updates);
+        setNotes(prev => prev.map(n => n.id === id ? updatedNote : n));
+        return updatedNote;
+      } catch (err) {
+        console.error('Failed to update note:', err);
+        throw err;
+      }
+    }, 'Updating Note...', 'Saving changes');
   };
 
   const deleteNote = async (id) => {
-    try {
-      await db.removeNote(id);
-      setNotes(prev => prev.filter(n => n.id !== id));
-    } catch (err) {
-      console.error('Failed to delete note:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        await db.removeNote(id);
+        setNotes(prev => prev.filter(n => n.id !== id));
+      } catch (err) {
+        console.error('Failed to delete note:', err);
+        throw err;
+      }
+    }, 'Deleting Note...', 'Removing personal note');
   };
 
   // ==================== RESET ALL DATA ====================
@@ -607,92 +731,102 @@ export function AppProvider({ children }) {
     if (enteredPin !== RESET_PIN) {
       throw new Error('INVALID_PIN');
     }
-    try {
-      await db.resetAllData();
-      // Clear all local state
-      setCustomers([]);
-      setInvoices([]);
-      setExpenses([]);
-      setRefillTrips([]);
-      setNotes([]);
-      setStock(prev => prev.map(s => ({ ...s, filledCount: 0, emptyCount: 0 })));
-      return true;
-    } catch (err) {
-      console.error('Failed to reset data:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        await db.resetAllData();
+        // Clear all local state
+        setCustomers([]);
+        setInvoices([]);
+        setExpenses([]);
+        setRefillTrips([]);
+        setNotes([]);
+        setStock(prev => prev.map(s => ({ ...s, filledCount: 0, emptyCount: 0 })));
+        return true;
+      } catch (err) {
+        console.error('Failed to reset data:', err);
+        throw err;
+      }
+    }, 'Resetting All Data...', 'Clearing database records to initial state');
   };
 
   // ==================== MARKET PRICES & DISCOUNTS ====================
 
   const updateMarketPrices = async (newPrices, autoUpdateCustomers = true) => {
-    try {
-      const oldMarketPrices = { ...marketPrices };
-      const saved = await db.saveMarketPrices(newPrices);
-      setMarketPrices(saved.prices);
-      setMarketPricesMeta(saved.meta);
+    return withLoading(async () => {
+      try {
+        const oldMarketPrices = { ...marketPrices };
+        const saved = await db.saveMarketPrices(newPrices);
+        setMarketPrices(saved.prices);
+        setMarketPricesMeta(saved.meta);
 
-      if (autoUpdateCustomers && customers.length > 0) {
-        const updatedCusts = await db.updateAllCustomersWithNewMarketPrices(saved.prices, customers, oldMarketPrices);
-        setCustomers(updatedCusts);
-        return { updatedCustomersCount: updatedCusts.length, prices: saved.prices };
+        if (autoUpdateCustomers && customers.length > 0) {
+          const updatedCusts = await db.updateAllCustomersWithNewMarketPrices(saved.prices, customers, oldMarketPrices);
+          setCustomers(updatedCusts);
+          return { updatedCustomersCount: updatedCusts.length, prices: saved.prices };
+        }
+        return { updatedCustomersCount: 0, prices: saved.prices };
+      } catch (err) {
+        console.error('Failed to update market prices:', err);
+        throw err;
       }
-      return { updatedCustomersCount: 0, prices: saved.prices };
-    } catch (err) {
-      console.error('Failed to update market prices:', err);
-      throw err;
-    }
+    }, 'Updating Market Prices...', 'Calculating rates and customer discounts');
   };
 
   const updateCustomerDiscounts = async (customerId, discounts, customPrices) => {
-    try {
-      const updatedCust = await db.patchCustomer(customerId, {
-        prices: {
-          ...customPrices,
+    return withLoading(async () => {
+      try {
+        const updatedCust = await db.patchCustomer(customerId, {
+          prices: {
+            ...customPrices,
+            discounts,
+          },
           discounts,
-        },
-        discounts,
-      });
-      setCustomers(prev => prev.map(c => c.id === customerId ? updatedCust : c));
-      return updatedCust;
-    } catch (err) {
-      console.error('Failed to update customer discounts:', err);
-      throw err;
-    }
+        });
+        setCustomers(prev => prev.map(c => c.id === customerId ? updatedCust : c));
+        return updatedCust;
+      } catch (err) {
+        console.error('Failed to update customer discounts:', err);
+        throw err;
+      }
+    }, 'Updating Pricing...', 'Saving custom customer rates');
   };
 
   // ==================== AGENCY SETTINGS ====================
 
   const updateAgencySettings = async (newSettings) => {
-    try {
-      const res = await db.saveAgencySettings(newSettings, currentUser?.name || 'Admin');
-      setAgencySettings(res.settings);
-      setAgencySettingsMeta({
-        syncedWithSupabase: res.syncedWithSupabase,
-        error: res.error,
-        updatedAt: res.settings.updatedAt,
-      });
-      return res;
-    } catch (err) {
-      console.error('Failed to update agency settings:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const res = await db.saveAgencySettings(newSettings, currentUser?.name || 'Admin');
+        setAgencySettings(res.settings);
+        setAgencySettingsMeta({
+          syncedWithSupabase: res.syncedWithSupabase,
+          error: res.error,
+          updatedAt: res.settings.updatedAt,
+        });
+        return res;
+      } catch (err) {
+        console.error('Failed to update agency settings:', err);
+        throw err;
+      }
+    }, 'Saving Agency Settings...', 'Updating agency profile & configuration');
   };
 
   const resetAgencySettings = async () => {
-    try {
-      const res = await db.saveAgencySettings(DEFAULT_AGENCY_SETTINGS, currentUser?.name || 'Admin');
-      setAgencySettings(res.settings);
-      setAgencySettingsMeta({
-        syncedWithSupabase: res.syncedWithSupabase,
-        error: res.error,
-        updatedAt: res.settings.updatedAt,
-      });
-      return res;
-    } catch (err) {
-      console.error('Failed to reset agency settings:', err);
-      throw err;
-    }
+    return withLoading(async () => {
+      try {
+        const res = await db.saveAgencySettings(DEFAULT_AGENCY_SETTINGS, currentUser?.name || 'Admin');
+        setAgencySettings(res.settings);
+        setAgencySettingsMeta({
+          syncedWithSupabase: res.syncedWithSupabase,
+          error: res.error,
+          updatedAt: res.settings.updatedAt,
+        });
+        return res;
+      } catch (err) {
+        console.error('Failed to reset agency settings:', err);
+        throw err;
+      }
+    }, 'Resetting Settings...', 'Restoring default configuration');
   };
 
   // ==================== CONTEXT VALUE ====================
@@ -703,6 +837,8 @@ export function AppProvider({ children }) {
       currentUser, appUsers, createAppUser, updateAppUser, deleteAppUser,
       hasModuleAccess, canEditModule,
       loading, error, reloadData: loadAllData,
+      globalLoading, globalLoadingMessage, globalLoadingSubtext,
+      showLoading, hideLoading, forceHideLoading, withLoading,
       customers, addCustomer, updateCustomer, deleteCustomer,
       marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
       agencySettings, agencySettingsMeta, updateAgencySettings, resetAgencySettings,

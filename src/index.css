@@ -34,6 +34,7 @@
   --info-bg: #e0f2fe;
   
   --sidebar-w: 240px;
+  --sidebar-collapsed-w: 68px;
   --header-h: 64px;
   --radius: 12px;
   --radius-sm: 8px;
@@ -238,7 +239,175 @@ input, select, textarea {
   flex: 1;
   min-height: 100vh;
   background: var(--bg-primary);
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Collapsed sidebar when parent layout has class */
+.sidebar-is-collapsed .main-content {
+  margin-left: var(--sidebar-collapsed-w);
+}
+
+/* ==========================================================================
+   SIDEBAR TOGGLE & COLLAPSED STATE (CLEAR MINIMIZE / MAXIMIZE)
+   ========================================================================== */
+
+.sidebar {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: visible !important;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 80;
+}
+
+/* Floating Edge Toggle Tab on sidebar border */
+.sidebar-edge-toggle-btn {
+  position: absolute;
+  top: 62px;
+  right: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #ea580c;
+  color: #ea580c;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), 0 0 0 2px rgba(249, 115, 22, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1000;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-edge-toggle-btn:hover {
+  background: #ea580c;
+  color: #ffffff;
+  transform: scale(1.15);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
+}
+
+/* Header Toggle Button when Expanded */
+.sidebar-header-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1.5px solid #fed7aa;
+  color: #ea580c;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.sidebar-header-toggle-btn:hover {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #ffffff;
+  transform: scale(1.08);
+  box-shadow: 0 3px 10px rgba(234, 88, 12, 0.3);
+}
+
+/* Maximize Button in Header when Collapsed */
+.sidebar-collapsed-expand-btn {
+  margin-top: 10px;
+  width: 44px;
+  height: 32px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 2px solid #f97316;
+  color: #ea580c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.25);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sidebar-collapsed-expand-btn:hover {
+  background: #ea580c;
+  color: #ffffff;
+  border-color: #ea580c;
+  transform: scale(1.12);
+  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.45);
+}
+
+/* Bottom Footer Toggle Button */
+.sidebar-footer-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: #fff7ed;
+  color: #ea580c;
+  border: 1.5px solid #fed7aa;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-footer-toggle-btn:hover {
+  background: #ea580c;
+  color: #ffffff;
+  border-color: #ea580c;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35);
+  transform: translateY(-1px);
+}
+
+.sidebar-collapsed {
+  width: var(--sidebar-collapsed-w) !important;
+}
+
+.sidebar-collapsed .sidebar-brand {
+  padding: 16px 8px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-collapsed .sidebar-nav {
+  padding: 12px 6px;
+  align-items: center;
+}
+
+.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 10px 0;
+  width: 100%;
+  gap: 0;
+}
+
+.sidebar-collapsed .nav-icon {
+  font-size: 1.25rem;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 10px 6px;
+}
+
+.sidebar-collapsed .sidebar-footer-toggle-btn {
+  padding: 8px 0;
+  justify-content: center;
+}
+
+.sidebar-collapsed .logout-btn {
+  justify-content: center;
+  padding: 9px 0;
+  gap: 0;
+}
+
 
 /* ==========================================================================
    PAGE COMMON & CARD STYLES (LIGHT THEME)

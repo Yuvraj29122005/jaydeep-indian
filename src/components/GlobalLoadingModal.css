@@ -1,0 +1,320 @@
+/* ==========================================================================
+   GLOBAL LOADING POPUP WITH LOGO & ROUNDING SPINNER
+   ========================================================================== */
+
+.gl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: blur(8px) saturate(180%);
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  animation: glFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  padding: 16px;
+  user-select: none;
+}
+
+@keyframes glFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.gl-card {
+  position: relative;
+  background: #ffffff;
+  border-radius: 28px;
+  padding: 38px 36px 28px;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 
+    0 25px 60px -12px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(245, 158, 11, 0.25),
+    0 10px 25px -5px rgba(234, 88, 12, 0.15);
+  animation: glCardPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  overflow: hidden;
+}
+
+@keyframes glCardPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.88) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Background ambient glow inside card */
+.gl-card::before {
+  content: '';
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(249, 115, 22, 0.15) 0%, rgba(234, 88, 12, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ==================== LOGO + ROUNDING CONTAINER ==================== */
+.gl-spinner-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  z-index: 1;
+}
+
+/* Outer rotating SVG spinner ring around logo */
+.gl-spinner-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 120px;
+  transform-origin: center center;
+  animation: glSpin360 1.25s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  pointer-events: none;
+}
+
+@keyframes glSpin360 {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Secondary counter-rotating micro orbit particle */
+.gl-orbit-tracker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 120px;
+  animation: glOrbitParticle 2.2s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes glOrbitParticle {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.gl-orbit-dot {
+  position: absolute;
+  top: 6px;
+  left: calc(50% - 4px);
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border: 2px solid #ea580c;
+  border-radius: 50%;
+  box-shadow: 
+    0 0 10px #f97316,
+    0 0 20px #ea580c,
+    0 0 4px #ffffff;
+}
+
+/* Center Website Logo */
+.gl-center-logo {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff8c00 0%, #ea580c 50%, #dc2626 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 
+    0 8px 24px rgba(234, 88, 12, 0.38),
+    inset 0 2px 4px rgba(255, 255, 255, 0.4),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.15);
+  animation: glLogoBreathe 2.4s ease-in-out infinite;
+  z-index: 2;
+}
+
+@keyframes glLogoBreathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 
+      0 8px 24px rgba(234, 88, 12, 0.38),
+      inset 0 2px 4px rgba(255, 255, 255, 0.4);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 
+      0 12px 32px rgba(234, 88, 12, 0.55),
+      inset 0 2px 6px rgba(255, 255, 255, 0.6);
+  }
+}
+
+.gl-flame-svg {
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  animation: glFlameFlicker 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes glFlameFlicker {
+  0% {
+    transform: scale(0.97) translateY(1px);
+  }
+  100% {
+    transform: scale(1.03) translateY(-1px);
+  }
+}
+
+/* ==================== TYPOGRAPHY & MESSAGES ==================== */
+.gl-agency-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 2.2px;
+  color: #ea580c;
+  text-transform: uppercase;
+  margin-top: 18px;
+  z-index: 1;
+}
+
+.gl-title {
+  font-size: 1.32rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 6px 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  letter-spacing: -0.3px;
+  z-index: 1;
+}
+
+/* Animated sequential dots */
+.gl-dots span {
+  display: inline-block;
+  animation: glDotWave 1.4s infinite;
+  opacity: 0.2;
+}
+
+.gl-dots span:nth-child(1) {
+  animation-delay: 0s;
+}
+.gl-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.gl-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes glDotWave {
+  0%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.gl-message {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #334155;
+  margin: 0;
+  padding: 0 10px;
+  line-height: 1.45;
+  z-index: 1;
+}
+
+.gl-subtext {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 4px;
+  padding: 0 10px;
+  line-height: 1.35;
+  z-index: 1;
+}
+
+/* ==================== SHIMMER PROGRESS BAR ==================== */
+.gl-progress-track {
+  width: 160px;
+  height: 5px;
+  background: rgba(249, 115, 22, 0.15);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.gl-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 45%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f59e0b, #ea580c, #dc2626);
+  animation: glProgressSlide 1.5s ease-in-out infinite;
+}
+
+@keyframes glProgressSlide {
+  0% {
+    left: -45%;
+    width: 30%;
+  }
+  50% {
+    width: 60%;
+  }
+  100% {
+    left: 100%;
+    width: 30%;
+  }
+}
+
+/* ==================== FOOTNOTE ==================== */
+.gl-footer-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-weight: 500;
+  z-index: 1;
+}
+
+.gl-footer-note-icon {
+  font-size: 0.8rem;
+  animation: glPulseIcon 1.5s infinite;
+}
+
+@keyframes glPulseIcon {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
