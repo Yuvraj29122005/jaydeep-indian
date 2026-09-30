@@ -7,7 +7,7 @@ const CYL_ICONS = { '5kg': '🟡', '19kg': '🟠', '47.5kg': '🔴' };
 const CYL_DESC = {
   '5kg': 'Small Domestic / Commercial Booster (5 Kg)',
   '19kg': 'Standard Commercial Cylinders (19 Kg)',
-  '47.5kg': 'Industrial / Jumbo Hotel Cylinders (47.5 Kg)',
+  '47.5kg': 'Industrial / Jumbo Cylinders (47.5 Kg)',
 };
 
 export default function Stock() {
@@ -18,29 +18,73 @@ export default function Stock() {
     refreshStock, 
     getCylinderMetrics, 
     canEditModule, 
-    agencySettings,
-    customers,
-    refillTrips 
+    agencySettings 
   } = useApp();
 
   const canEdit = canEditModule('stock');
-  const [activeTab, setActiveTab] = useState('overview');
   const [addModal, setAddModal] = useState(null); // cylinderType
   const [addForm, setAddForm] = useState({ filledAdd: '', emptyAdd: '' });
-  const [adjustModal, setAdjustModal] = useState(null);
+  const [adjustModal, setAdjustModal] = useState(null); // cylinderType
   const [adjustForm, setAdjustForm] = useState({ filledCount: '', emptyCount: '' });
-  const [batchModal, setBatchModal] = useState(false);
-  const [batchForm, setBatchForm] = useState({});
-  const [syncFeedback, setSyncFeedback] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [syncNotice, setSyncNotice] = useState(null);
 
-  // Sync fresh stock data on mount
+  // Automatic synchronization on mount, periodic interval, and window focus
   useEffect(() => {
-    refreshStock().catch(err => console.warn('Mount stock sync note:', err));
+    let isMounted = true;
+    
+    const doAutoSync = async () => {
+      try {
+        await refreshStock(true);
+        if (isMounted) {
+          setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+      } catch (err) {
+        console.warn('Auto stock sync note:', err);
+      }
+    };
+
+    doAutoSync();
+
+    // Periodic auto-sync every 30 seconds
+    const intervalId = setInterval(doAutoSync, 30000);
+
+    // Auto-sync when window regains focus
+    const onWindowFocus = () => {
+      doAutoSync();
+    };
+    window.addEventListener('focus', onWindowFocus);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onWindowFocus);
+    };
   }, []);
+
+  const handleFetchStock = async () => {
+    setIsFetching(true);
+    setSyncNotice(null);
+    try {
+      await refreshStock(false);
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastSyncedTime(timeStr);
+      setSyncNotice('✓ Fresh stock fetched from database!');
+      setTimeout(() => setSyncNotice(null), 3000);
+    } catch (err) {
+      console.error('Manual fetch error:', err);
+      setSyncNotice('⚠️ Could not connect to database, local stock used');
+      setTimeout(() => setSyncNotice(null), 4000);
+    } finally {
+      setIsFetching(false);
+    }
+  };
 
   const metrics = getCylinderMetrics ? getCylinderMetrics() : {};
 
-  // Compute aggregate totals across all varieties
+  // Compute aggregate totals across all varieties for the audit table
   const aggregate = {
     warehouseFilled: 0,
     warehouseEmpty: 0,
@@ -48,7 +92,6 @@ export default function Stock() {
     withCustomers: 0,
     inTransitRefill: 0,
     totalAgencyPool: 0,
-    totalDelivered: 0,
   };
 
   CYLINDER_TYPES.forEach(type => {
@@ -59,7 +102,6 @@ export default function Stock() {
       withCustomers: 0,
       inTransitRefill: 0,
       totalAgencyPool: 0,
-      totalDelivered: 0,
     };
     aggregate.warehouseFilled += m.warehouseFilled;
     aggregate.warehouseEmpty += m.warehouseEmpty;
@@ -67,14 +109,7 @@ export default function Stock() {
     aggregate.withCustomers += m.withCustomers;
     aggregate.inTransitRefill += m.inTransitRefill;
     aggregate.totalAgencyPool += m.totalAgencyPool;
-    aggregate.totalDelivered += m.totalDelivered;
   });
-
-  const handleManualSync = async () => {
-    await refreshStock();
-    setSyncFeedback(true);
-    setTimeout(() => setSyncFeedback(false), 2500);
-  };
 
   const openAdd = (type) => {
     setAddForm({ filledAdd: '', emptyAdd: '' });
@@ -86,652 +121,432 @@ export default function Stock() {
     setAdjustModal(type);
   };
 
-  const openBatchModal = () => {
-    const initial = {};
-    CYLINDER_TYPES.forEach(type => {
-      const s = stock.find(st => st.cylinderType === type) || { filledCount: 0, emptyCount: 0 };
-      initial[type] = {
-        filled: s.filledCount,
-        empty: s.emptyCount,
-      };
-    });
-    setBatchForm(initial);
-    setBatchModal(true);
-  };
-
-  const submitAdd = async () => {
+  const submitAdd = async (e) => {
+    if (e) e.preventDefault();
     const fAdd = Number(addForm.filledAdd) || 0;
     const eAdd = Number(addForm.emptyAdd) || 0;
-    if (fAdd === 0 && eAdd === 0) return;
-    await addStockManual(addModal, fAdd, eAdd);
-    setAddModal(null);
+    if (fAdd === 0 && eAdd === 0) {
+      setAddModal(null);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await addStockManual(addModal, fAdd, eAdd);
+      await refreshStock(true);
+      setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setAddModal(null);
+    } catch (err) {
+      console.error('Failed to add stock:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const submitAdjust = async () => {
+  const submitAdjust = async (e) => {
+    if (e) e.preventDefault();
     const fCount = Number(adjustForm.filledCount) || 0;
     const eCount = Number(adjustForm.emptyCount) || 0;
-    await setStockDirect(adjustModal, fCount, eCount);
-    setAdjustModal(null);
-  };
-
-  const submitBatchForm = async () => {
-    for (const type of CYLINDER_TYPES) {
-      if (batchForm[type]) {
-        const fCount = Number(batchForm[type].filled) || 0;
-        const eCount = Number(batchForm[type].empty) || 0;
-        await setStockDirect(type, fCount, eCount);
-      }
+    setSubmitting(true);
+    try {
+      await setStockDirect(adjustModal, fCount, eCount);
+      await refreshStock(true);
+      setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setAdjustModal(null);
+    } catch (err) {
+      console.error('Failed to adjust stock:', err);
+    } finally {
+      setSubmitting(false);
     }
-    setBatchModal(false);
   };
 
   return (
     <div className="page">
       {/* Page Header */}
-      <div className="page-header">
+      <div className="page-header" style={{ marginBottom: 24 }}>
         <div>
           <h1 className="page-title">Cylinder Stock Management</h1>
           <p className="page-subtitle">
-            Accurate, real-time inventory tracking synchronized with Supabase database (5kg, 19kg, 47.5kg)
+            Live inventory of filled & empty cylinders in godown and network
           </p>
         </div>
-        <div className="btn-group">
-          {syncFeedback && (
+        <div className="btn-group" style={{ alignItems: 'center' }}>
+          {syncNotice && (
             <span className="badge badge-success" style={{ alignSelf: 'center', padding: '6px 12px', fontSize: '0.85rem' }}>
-              ✓ Synced with Database!
+              {syncNotice}
             </span>
           )}
-          <button className="btn btn-secondary" onClick={handleManualSync} title="Fetch freshest stock count from database">
-            🔄 Sync with DB
+
+          {/* Automatic Database Sync Indicator */}
+          <div 
+            style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: 8, 
+              background: 'rgba(34, 197, 94, 0.08)', 
+              color: '#15803d', 
+              border: '1px solid rgba(34, 197, 94, 0.25)', 
+              padding: '6px 14px', 
+              borderRadius: 20, 
+              fontSize: '0.82rem', 
+              fontWeight: 600 
+            }}
+            title="Database continuously synchronizes automatically"
+          >
+            <span style={{ 
+              display: 'inline-block', 
+              width: 8, 
+              height: 8, 
+              borderRadius: '50%', 
+              background: '#16a34a',
+              boxShadow: '0 0 0 3px rgba(34, 197, 94, 0.2)' 
+            }} />
+            <span>Auto-synced</span>
+            {lastSyncedTime && (
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 500 }}>
+                ({lastSyncedTime})
+              </span>
+            )}
+          </div>
+
+          {/* Fetch from DB Button */}
+          <button 
+            className="btn btn-secondary" 
+            onClick={handleFetchStock}
+            disabled={isFetching}
+            title="Fetch freshest stock and counts from database right now"
+          >
+            {isFetching ? '⏳ Fetching...' : '🔄 Fetch from DB'}
           </button>
-          {canEdit && (
-            <button className="btn btn-primary" onClick={openBatchModal} title="Reconcile and set inventory counts for all varieties">
-              ⚡ Multi-Variety Direct Audit
-            </button>
-          )}
-          <button className="btn btn-secondary" onClick={() => exportStockExcel(stock, agencySettings)}>
+
+          {/* Export Excel Button */}
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => exportStockExcel(stock, agencySettings)}
+            title="Download full inventory report in Excel format"
+          >
             📥 Export Excel
           </button>
         </div>
       </div>
 
-      {/* Interconnected Top Summary Cards */}
-      <div className="stats-grid mb-24" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
-        <div className="stat-card" style={{ borderLeft: '4px solid var(--success)' }}>
-          <div className="stat-icon" style={{ background: 'rgba(34, 197, 94, 0.12)', color: 'var(--success)' }}>🟢</div>
-          <div className="stat-body">
-            <span className="stat-label">Godown Filled Stock</span>
-            <div className="stat-val text-success">{aggregate.warehouseFilled}</div>
-            <span className="stat-hint">Ready for immediate sale</span>
-          </div>
-        </div>
+      {/* Variety-Wise Cylinder Cards - Main Focus */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24, marginBottom: 28 }}>
+        {CYLINDER_TYPES.map(type => {
+          const m = metrics[type] || {
+            warehouseFilled: 0,
+            warehouseEmpty: 0,
+            warehouseTotal: 0,
+            withCustomers: 0,
+            inTransitRefill: 0,
+            totalAgencyPool: 0,
+          };
+          const isLowStock = m.warehouseFilled < 10;
 
-        <div className="stat-card" style={{ borderLeft: '4px solid #ef4444' }}>
-          <div className="stat-icon" style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}>🔴</div>
-          <div className="stat-body">
-            <span className="stat-label">Godown Empty Stock</span>
-            <div className="stat-val" style={{ color: '#ef4444' }}>{aggregate.warehouseEmpty}</div>
-            <span className="stat-hint">In warehouse ready for refill</span>
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ borderLeft: '4px solid #3b82f6' }}>
-          <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>🚚</div>
-          <div className="stat-body">
-            <span className="stat-label">Plant Refill In Transit</span>
-            <div className="stat-val text-accent">{aggregate.inTransitRefill}</div>
-            <span className="stat-hint">Sent on trucks to bottling plant</span>
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ borderLeft: '4px solid #f59e0b' }}>
-          <div className="stat-icon" style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b' }}>👥</div>
-          <div className="stat-body">
-            <span className="stat-label">With Customers</span>
-            <div className="stat-val" style={{ color: '#f59e0b' }}>{aggregate.withCustomers}</div>
-            <span className="stat-hint">Pending empty return collection</span>
-          </div>
-        </div>
-
-        <div className="stat-card" style={{ borderLeft: '4px solid #8b5cf6' }}>
-          <div className="stat-icon" style={{ background: 'rgba(139, 92, 246, 0.12)', color: '#8b5cf6' }}>🌐</div>
-          <div className="stat-body">
-            <span className="stat-label">Total Agency Asset Pool</span>
-            <div className="stat-val" style={{ color: '#8b5cf6' }}>{aggregate.totalAgencyPool}</div>
-            <span className="stat-hint">Warehouse + Plant + Customers</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="tabs mb-24">
-        <button className={`tab${activeTab === 'overview' ? ' active' : ''}`} onClick={() => setActiveTab('overview')}>
-          📊 Variety-Wise Comprehensive Pool
-        </button>
-        <button className={`tab${activeTab === 'filled' ? ' active' : ''}`} onClick={() => setActiveTab('filled')}>
-          🟢 Warehouse Filled Stock
-        </button>
-        <button className={`tab${activeTab === 'empty' ? ' active' : ''}`} onClick={() => setActiveTab('empty')}>
-          🔴 Warehouse Empty Stock
-        </button>
-        <button className={`tab${activeTab === 'market' ? ' active' : ''}`} onClick={() => setActiveTab('market')}>
-          👥 Customer Holdings & Transit
-        </button>
-      </div>
-
-      {/* TAB 1: OVERVIEW */}
-      {activeTab === 'overview' && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-            {CYLINDER_TYPES.map(type => {
-              const m = metrics[type] || {
-                warehouseFilled: 0,
-                warehouseEmpty: 0,
-                warehouseTotal: 0,
-                withCustomers: 0,
-                inTransitRefill: 0,
-                totalAgencyPool: 0,
-                totalDelivered: 0,
-              };
-
-              const pool = m.totalAgencyPool || (m.warehouseTotal + m.withCustomers + m.inTransitRefill) || 1;
-              const filledRatio = ((m.warehouseFilled / pool) * 100).toFixed(1);
-              const emptyRatio = ((m.warehouseEmpty / pool) * 100).toFixed(1);
-              const transitRatio = ((m.inTransitRefill / pool) * 100).toFixed(1);
-              const custRatio = ((m.withCustomers / pool) * 100).toFixed(1);
-
-              const isLowStock = m.warehouseFilled < 10;
-
-              return (
-                <div className="stock-type-card" key={type} style={{ position: 'relative', overflow: 'hidden' }}>
-                  {isLowStock && (
-                    <div style={{
-                      position: 'absolute',
-                      top: 12,
-                      right: 12,
-                      background: 'rgba(239, 68, 68, 0.15)',
-                      color: 'var(--danger)',
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      padding: '3px 8px',
-                      borderRadius: 4,
-                      border: '1px solid rgba(239, 68, 68, 0.3)'
-                    }}>
-                      ⚠️ Low Warehouse Stock
-                    </div>
-                  )}
-
-                  <div className="stock-type-header">
-                    <div className="stock-type-icon">{CYL_ICONS[type]}</div>
-                    <div>
-                      <div className="stock-type-name">{type} Cylinder</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{CYL_DESC[type]}</div>
-                    </div>
-                  </div>
-
-                  {/* Primary Godown Counts */}
-                  <div className="stock-counts">
-                    <div className="stock-count-box" style={{ background: 'rgba(34, 197, 94, 0.08)' }}>
-                      <div className="stock-count-num filled-color">{m.warehouseFilled}</div>
-                      <div className="stock-count-label">🟢 Godown Filled</div>
-                    </div>
-                    <div className="stock-count-box" style={{ background: 'rgba(239, 68, 68, 0.08)' }}>
-                      <div className="stock-count-num" style={{ color: '#ef4444' }}>{m.warehouseEmpty}</div>
-                      <div className="stock-count-label">🔴 Godown Empty</div>
-                    </div>
-                  </div>
-
-                  {/* Interconnected Network Status */}
-                  <div style={{
-                    background: 'var(--bg-primary)',
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    border: '1px solid var(--border)',
-                    margin: '12px 0',
-                    fontSize: '0.78rem'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span className="text-muted">🚚 Plant Refill Transit:</span>
-                      <strong style={{ color: 'var(--primary)' }}>{m.inTransitRefill} cyl</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span className="text-muted">👥 Pending With Customers:</span>
-                      <strong style={{ color: '#f59e0b' }}>{m.withCustomers} cyl</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 4, borderTop: '1px dashed var(--border)' }}>
-                      <span style={{ fontWeight: 600 }}>🌐 Total Agency Asset Pool:</span>
-                      <strong style={{ color: '#8b5cf6', fontSize: '0.9rem' }}>{m.totalAgencyPool} cyl</strong>
-                    </div>
-                  </div>
-
-                  {/* Distribution Ratio Bar */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 4 }}>
-                      <span>Distribution Breakdown</span>
-                      <span>{filledRatio}% Filled · {emptyRatio}% Empty</span>
-                    </div>
-                    <div style={{ height: 8, borderRadius: 4, background: 'var(--bg-secondary)', overflow: 'hidden', display: 'flex' }}>
-                      <div style={{ width: `${filledRatio}%`, background: 'var(--success)' }} title={`Warehouse Filled: ${m.warehouseFilled}`} />
-                      <div style={{ width: `${emptyRatio}%`, background: '#ef4444' }} title={`Warehouse Empty: ${m.warehouseEmpty}`} />
-                      <div style={{ width: `${transitRatio}%`, background: 'var(--primary)' }} title={`Plant Transit: ${m.inTransitRefill}`} />
-                      <div style={{ width: `${custRatio}%`, background: '#f59e0b' }} title={`With Customers: ${m.withCustomers}`} />
-                    </div>
-                  </div>
-
-                  {canEdit && (
-                    <div className="btn-group mt-16">
-                      <button 
-                        className="btn btn-primary btn-sm" 
-                        style={{ flex: 1, boxShadow: '0 4px 12px rgba(234, 88, 12, 0.25)' }} 
-                        onClick={() => openAdd(type)}
-                      >
-                        ➕ Add Stock
-                      </button>
-                      <button 
-                        className="btn btn-secondary btn-sm" 
-                        style={{ flex: 1 }}
-                        onClick={() => openAdjust(type, m.warehouseFilled, m.warehouseEmpty)}
-                      >
-                        ✏️ Direct Set
-                      </button>
-                    </div>
-                  )}
+          return (
+            <div className="stock-type-card" key={type} style={{ position: 'relative', overflow: 'hidden' }}>
+              {isLowStock && (
+                <div style={{
+                  position: 'absolute',
+                  top: 14,
+                  right: 14,
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: 'var(--danger)',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  border: '1px solid rgba(239, 68, 68, 0.3)'
+                }}>
+                  ⚠️ Low Stock
                 </div>
-              );
-            })}
-          </div>
+              )}
 
-          {/* Detailed Full Audit Table */}
-          <div className="card mt-24">
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span className="card-title">📋 Interconnected Cylinder Asset Audit Table</span>
-              <span className="badge badge-info">Live Supabase Sync</span>
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Cylinder Variety</th>
-                    <th>🟢 Warehouse Filled</th>
-                    <th>🔴 Warehouse Empty</th>
-                    <th>🏢 Total Warehouse</th>
-                    <th>🚚 Refill Plant Transit</th>
-                    <th>👥 With Customers</th>
-                    <th>🌐 Total Agency Pool</th>
-                    <th>Status</th>
-                    {canEdit && <th>Action</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {CYLINDER_TYPES.map(type => {
-                    const m = metrics[type] || {
-                      warehouseFilled: 0,
-                      warehouseEmpty: 0,
-                      warehouseTotal: 0,
-                      withCustomers: 0,
-                      inTransitRefill: 0,
-                      totalAgencyPool: 0,
-                    };
-                    const isLowStock = m.warehouseFilled < 10;
-                    return (
-                      <tr key={type}>
-                        <td className="fw-600">
-                          <span style={{ fontSize: '1.1rem', marginRight: 6 }}>{CYL_ICONS[type]}</span>
-                          {type}
-                        </td>
-                        <td className="text-success fw-600" style={{ fontSize: '1.05rem' }}>{m.warehouseFilled}</td>
-                        <td style={{ color: '#ef4444', fontWeight: 600, fontSize: '1.05rem' }}>{m.warehouseEmpty}</td>
-                        <td className="fw-600">{m.warehouseTotal}</td>
-                        <td style={{ color: 'var(--primary)', fontWeight: 600 }}>{m.inTransitRefill}</td>
-                        <td style={{ color: '#f59e0b', fontWeight: 600 }}>{m.withCustomers}</td>
-                        <td style={{ color: '#8b5cf6', fontWeight: 700, fontSize: '1.05rem' }}>{m.totalAgencyPool}</td>
-                        <td>
-                          {isLowStock ? (
-                            <span className="badge badge-danger">⚠️ Low Filled Stock</span>
-                          ) : (
-                            <span className="badge badge-success">✓ Stock Optimal</span>
-                          )}
-                        </td>
-                        {canEdit && (
-                          <td>
-                            <div className="btn-group" style={{ margin: 0 }}>
-                              <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(type, m.warehouseFilled, m.warehouseEmpty)}>
-                                ✏️ Set
-                              </button>
-                              <button className="btn btn-primary btn-sm" onClick={() => openAdd(type)}>
-                                ➕ Add
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                  {/* Totals Row */}
-                  <tr style={{ background: 'var(--bg-secondary)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                    <td>TOTAL (ALL VARIETIES)</td>
-                    <td className="text-success" style={{ fontSize: '1.15rem' }}>{aggregate.warehouseFilled}</td>
-                    <td style={{ color: '#ef4444', fontSize: '1.15rem' }}>{aggregate.warehouseEmpty}</td>
-                    <td style={{ fontSize: '1.15rem' }}>{aggregate.warehouseTotal}</td>
-                    <td style={{ color: 'var(--primary)', fontSize: '1.15rem' }}>{aggregate.inTransitRefill}</td>
-                    <td style={{ color: '#f59e0b', fontSize: '1.15rem' }}>{aggregate.withCustomers}</td>
-                    <td style={{ color: '#8b5cf6', fontSize: '1.25rem' }}>{aggregate.totalAgencyPool}</td>
-                    <td><span className="badge badge-primary">Total Agency Assets</span></td>
-                    {canEdit && <td>—</td>}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
+              <div className="stock-type-header" style={{ marginBottom: 16 }}>
+                <div className="stock-type-icon">{CYL_ICONS[type]}</div>
+                <div>
+                  <div className="stock-type-name" style={{ fontSize: '1.15rem', fontWeight: 700 }}>{type} Cylinder</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{CYL_DESC[type]}</div>
+                </div>
+              </div>
 
-      {/* TAB 2: FILLED BOTTLES */}
-      {activeTab === 'filled' && (
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">🟢 Godown Filled Bottle Inventory</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cylinder Variety</th>
-                  <th>Description</th>
-                  <th>Filled Ready Count</th>
-                  <th>Holding Status</th>
-                  {canEdit && <th>Quick Action</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {CYLINDER_TYPES.map(type => {
-                  const m = metrics[type] || { warehouseFilled: 0, warehouseEmpty: 0 };
-                  return (
-                    <tr key={type}>
-                      <td className="fw-600">{CYL_ICONS[type]} {type}</td>
-                      <td className="text-muted">{CYL_DESC[type]}</td>
-                      <td className="text-success fw-600" style={{ fontSize: '1.25rem' }}>{m.warehouseFilled} Bottles</td>
+              {/* Godown Stock Counts */}
+              <div className="stock-counts" style={{ marginBottom: 16 }}>
+                <div className="stock-count-box" style={{ background: 'rgba(34, 197, 94, 0.08)' }}>
+                  <div className="stock-count-num filled-color">{m.warehouseFilled}</div>
+                  <div className="stock-count-label">🟢 Filled (Godown)</div>
+                </div>
+                <div className="stock-count-box" style={{ background: 'rgba(239, 68, 68, 0.08)' }}>
+                  <div className="stock-count-num" style={{ color: '#ef4444' }}>{m.warehouseEmpty}</div>
+                  <div className="stock-count-label">🔴 Empty (Godown)</div>
+                </div>
+              </div>
+
+              {/* Full Network Stats Breakdown */}
+              <div style={{
+                background: 'var(--bg-primary)',
+                borderRadius: 8,
+                padding: '12px 14px',
+                border: '1px solid var(--border)',
+                marginBottom: 16,
+                fontSize: '0.82rem',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 8
+              }}>
+                <div>
+                  <span className="text-muted">🏢 Total in Godown: </span>
+                  <strong style={{ color: 'var(--text-primary)' }}>{m.warehouseTotal}</strong>
+                </div>
+                <div>
+                  <span className="text-muted">👥 With Customers: </span>
+                  <strong style={{ color: '#f59e0b' }}>{m.withCustomers}</strong>
+                </div>
+                <div>
+                  <span className="text-muted">🚚 Plant Transit: </span>
+                  <strong style={{ color: 'var(--primary)' }}>{m.inTransitRefill}</strong>
+                </div>
+                <div>
+                  <span className="text-muted">🌐 Total Pool: </span>
+                  <strong style={{ color: '#8b5cf6' }}>{m.totalAgencyPool}</strong>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              {canEdit && (
+                <div className="btn-group" style={{ margin: 0 }}>
+                  <button 
+                    className="btn btn-primary" 
+                    style={{ flex: 1, padding: '8px 14px', fontSize: '0.88rem' }} 
+                    onClick={() => openAdd(type)}
+                  >
+                    ➕ Add Stock
+                  </button>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ flex: 1, padding: '8px 14px', fontSize: '0.88rem' }}
+                    onClick={() => openAdjust(type, m.warehouseFilled, m.warehouseEmpty)}
+                  >
+                    ✏️ Adjust Stock
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Clean Full Inventory Table */}
+      <div className="card">
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className="card-title">📋 Godown & Network Inventory Overview</span>
+          <span className="badge badge-success">✓ Live Database Synced</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cylinder Variety</th>
+                <th>🟢 Filled (Godown)</th>
+                <th>🔴 Empty (Godown)</th>
+                <th>🏢 Total in Godown</th>
+                <th>👥 With Customers</th>
+                <th>🚚 Plant Transit</th>
+                <th>🌐 Total Agency Pool</th>
+                <th>Status</th>
+                {canEdit && <th>Action</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {CYLINDER_TYPES.map(type => {
+                const m = metrics[type] || {
+                  warehouseFilled: 0,
+                  warehouseEmpty: 0,
+                  warehouseTotal: 0,
+                  withCustomers: 0,
+                  inTransitRefill: 0,
+                  totalAgencyPool: 0,
+                };
+                const isLowStock = m.warehouseFilled < 10;
+                return (
+                  <tr key={type}>
+                    <td className="fw-600">
+                      <span style={{ fontSize: '1.15rem', marginRight: 8 }}>{CYL_ICONS[type]}</span>
+                      {type} Cylinder
+                    </td>
+                    <td className="text-success fw-600" style={{ fontSize: '1.05rem' }}>{m.warehouseFilled}</td>
+                    <td style={{ color: '#ef4444', fontWeight: 600, fontSize: '1.05rem' }}>{m.warehouseEmpty}</td>
+                    <td className="fw-600">{m.warehouseTotal}</td>
+                    <td style={{ color: '#f59e0b', fontWeight: 600 }}>{m.withCustomers}</td>
+                    <td style={{ color: 'var(--primary)', fontWeight: 600 }}>{m.inTransitRefill}</td>
+                    <td style={{ color: '#8b5cf6', fontWeight: 700, fontSize: '1.05rem' }}>{m.totalAgencyPool}</td>
+                    <td>
+                      {isLowStock ? (
+                        <span className="badge badge-danger">⚠️ Low Stock</span>
+                      ) : (
+                        <span className="badge badge-success">✓ Optimal</span>
+                      )}
+                    </td>
+                    {canEdit && (
                       <td>
-                        {m.warehouseFilled === 0 ? (
-                          <span className="badge badge-danger">Out of Stock</span>
-                        ) : m.warehouseFilled < 10 ? (
-                          <span className="badge badge-warning">⚠️ Low Stock ({m.warehouseFilled})</span>
-                        ) : (
-                          <span className="badge badge-success">✓ Ready for Supply</span>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td>
+                        <div className="btn-group" style={{ margin: 0 }}>
                           <button className="btn btn-primary btn-sm" onClick={() => openAdd(type)}>
-                            ➕ Add Filled
+                            ➕ Add
                           </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: EMPTY BOTTLES */}
-      {activeTab === 'empty' && (
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">🔴 Godown Empty Bottle Inventory</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cylinder Variety</th>
-                  <th>Description</th>
-                  <th>Empty Count in Godown</th>
-                  <th>Refill Readiness</th>
-                  {canEdit && <th>Action</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {CYLINDER_TYPES.map(type => {
-                  const m = metrics[type] || { warehouseEmpty: 0, warehouseFilled: 0 };
-                  const canSendTrip = m.warehouseEmpty >= 10;
-                  return (
-                    <tr key={type}>
-                      <td className="fw-600">{CYL_ICONS[type]} {type}</td>
-                      <td className="text-muted">{CYL_DESC[type]}</td>
-                      <td style={{ color: '#ef4444', fontWeight: 700, fontSize: '1.25rem' }}>{m.warehouseEmpty} Bottles</td>
-                      <td>
-                        {canSendTrip ? (
-                          <span className="badge badge-primary">🚚 Truck Batch Ready ({m.warehouseEmpty})</span>
-                        ) : (
-                          <span className="badge badge-muted">Accumulating</span>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td>
                           <button className="btn btn-secondary btn-sm" onClick={() => openAdjust(type, m.warehouseFilled, m.warehouseEmpty)}>
-                            ✏️ Adjust Empty
+                            ✏️ Adjust
                           </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="card-body">
-            <div style={{ padding: '12px 16px', background: 'rgba(245,158,11,0.08)', borderRadius: 8, border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
-              💡 <strong>Instant Automatic Reconcile:</strong> Whenever you generate an invoice with empty bottle returns (or an Empty Bottle voucher), the godown empty stock is automatically credited immediately. When you dispatch a refill truck in Refill Tracking, empty stock is automatically deducted!
-            </div>
-          </div>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {/* Totals Row */}
+              <tr style={{ background: 'var(--bg-secondary)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
+                <td>TOTAL (ALL VARIETIES)</td>
+                <td className="text-success" style={{ fontSize: '1.15rem' }}>{aggregate.warehouseFilled}</td>
+                <td style={{ color: '#ef4444', fontSize: '1.15rem' }}>{aggregate.warehouseEmpty}</td>
+                <td style={{ fontSize: '1.15rem' }}>{aggregate.warehouseTotal}</td>
+                <td style={{ color: '#f59e0b', fontSize: '1.15rem' }}>{aggregate.withCustomers}</td>
+                <td style={{ color: 'var(--primary)', fontSize: '1.15rem' }}>{aggregate.inTransitRefill}</td>
+                <td style={{ color: '#8b5cf6', fontSize: '1.25rem' }}>{aggregate.totalAgencyPool}</td>
+                <td><span className="badge badge-primary">Total Assets</span></td>
+                {canEdit && <td>—</td>}
+              </tr>
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* TAB 4: CUSTOMER HOLDINGS & TRANSIT */}
-      {activeTab === 'market' && (
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">👥 Cylinders in Customer Possession & Plant Transit</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cylinder Variety</th>
-                  <th>With Customers (Pending Empty)</th>
-                  <th>In Transit at Bottling Plant</th>
-                  <th>Lifetime Delivered to Date</th>
-                  <th>Total Agency Pool</th>
-                </tr>
-              </thead>
-              <tbody>
-                {CYLINDER_TYPES.map(type => {
-                  const m = metrics[type] || { withCustomers: 0, inTransitRefill: 0, totalDelivered: 0, totalAgencyPool: 0 };
-                  return (
-                    <tr key={type}>
-                      <td className="fw-600">{CYL_ICONS[type]} {type}</td>
-                      <td style={{ color: '#f59e0b', fontWeight: 700, fontSize: '1.15rem' }}>{m.withCustomers} Cylinders</td>
-                      <td style={{ color: 'var(--primary)', fontWeight: 700, fontSize: '1.15rem' }}>{m.inTransitRefill} Cylinders</td>
-                      <td className="text-muted fw-600">{m.totalDelivered} Cylinders</td>
-                      <td style={{ color: '#8b5cf6', fontWeight: 800, fontSize: '1.2rem' }}>{m.totalAgencyPool} Cylinders</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="card-body">
-            <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0 }}>
-              📌 <strong>Interconnected Formula:</strong> Total Agency Asset Pool = [Godown Filled] + [Godown Empty] + [Plant Refill Transit] + [Pending Customer Holdings]. Every single cylinder is tracked across all four physical locations.
-            </p>
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* MODAL 1: ADD STOCK */}
-      {addModal && (
-        <div className="modal-overlay" onClick={() => setAddModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">➕ Add Stock — {addModal}</span>
-              <button className="modal-close" onClick={() => setAddModal(null)}>×</button>
-            </div>
-            <div className="modal-body">
-              <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                Enter the number of cylinders received into the warehouse. This increments the current database count.
-              </p>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label className="form-label">🟢 Filled Cylinders to Add</label>
-                  <input 
-                    className="form-control" 
-                    type="number" 
-                    min="0" 
-                    value={addForm.filledAdd}
-                    onChange={e => setAddForm(f => ({ ...f, filledAdd: e.target.value }))} 
-                    placeholder="0" 
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">🔴 Empty Cylinders to Add</label>
-                  <input 
-                    className="form-control" 
-                    type="number" 
-                    min="0" 
-                    value={addForm.emptyAdd}
-                    onChange={e => setAddForm(f => ({ ...f, emptyAdd: e.target.value }))} 
-                    placeholder="0" 
-                  />
-                </div>
+      {addModal && (() => {
+        const currentItem = stock.find(st => st.cylinderType === addModal) || { filledCount: 0, emptyCount: 0 };
+        const curF = Number(currentItem.filledCount) || 0;
+        const curE = Number(currentItem.emptyCount) || 0;
+        const addF = Number(addForm.filledAdd) || 0;
+        const addE = Number(addForm.emptyAdd) || 0;
+
+        return (
+          <div className="modal-overlay" onClick={() => !submitting && setAddModal(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">➕ Add Stock — {addModal} Cylinder</span>
+                <button className="modal-close" onClick={() => !submitting && setAddModal(null)}>×</button>
               </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setAddModal(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitAdd}>💾 Add to Stock</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 2: ADJUST / SET STOCK DIRECT */}
-      {adjustModal && (
-        <div className="modal-overlay" onClick={() => setAdjustModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">✏️ Set Godown Inventory — {adjustModal}</span>
-              <button className="modal-close" onClick={() => setAdjustModal(null)}>×</button>
-            </div>
-            <div className="modal-body">
-              <div style={{ background: 'rgba(234, 88, 12, 0.08)', padding: 12, borderRadius: 8, marginBottom: 16, border: '1px solid rgba(234, 88, 12, 0.2)' }}>
-                <strong style={{ color: 'var(--primary)' }}>⚠️ Direct Inventory Override:</strong>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-                  This will immediately set the absolute warehouse counts for <strong>{adjustModal}</strong> in the Supabase database.
-                </p>
-              </div>
-
-              <div className="form-grid">
-                <div className="form-group">
-                  <label className="form-label">🟢 Exact Filled Cylinders in Godown</label>
-                  <input 
-                    className="form-control" 
-                    type="number" 
-                    min="0" 
-                    value={adjustForm.filledCount}
-                    onChange={e => setAdjustForm(f => ({ ...f, filledCount: e.target.value }))} 
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">🔴 Exact Empty Cylinders in Godown</label>
-                  <input 
-                    className="form-control" 
-                    type="number" 
-                    min="0" 
-                    value={adjustForm.emptyCount}
-                    onChange={e => setAdjustForm(f => ({ ...f, emptyCount: e.target.value }))} 
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setAdjustModal(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitAdjust}>💾 Set Exact Count</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: BATCH RECONCILIATION AUDIT (ALL VARIETIES) */}
-      {batchModal && (
-        <div className="modal-overlay" onClick={() => setBatchModal(false)}>
-          <div className="modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">⚡ Multi-Variety Inventory Audit (5kg, 19kg, 47.5kg)</span>
-              <button className="modal-close" onClick={() => setBatchModal(false)}>×</button>
-            </div>
-            <div className="modal-body">
-              <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                Audit and synchronize all cylinder variety stock counts in one operation. Enter the exact physical counts present in the godown.
-              </p>
-
-              {CYLINDER_TYPES.map(type => (
-                <div key={type} style={{
-                  padding: 12,
-                  borderRadius: 8,
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-primary)',
-                  marginBottom: 12
-                }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.92rem', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>{CYL_ICONS[type]}</span>
-                    <span>{type} Cylinder</span>
+              <form onSubmit={submitAdd}>
+                <div className="modal-body">
+                  <div style={{ background: 'var(--bg-primary)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, border: '1px solid var(--border)', fontSize: '0.85rem' }}>
+                    <div style={{ color: 'var(--text-secondary)' }}>
+                      Current Godown Count: <strong className="text-success">{curF} Filled</strong> · <strong style={{ color: '#ef4444' }}>{curE} Empty</strong>
+                    </div>
+                    {(addF > 0 || addE > 0) && (
+                      <div style={{ marginTop: 6, fontWeight: 600, color: 'var(--primary)' }}>
+                        ➡️ New Total: <span className="text-success">{curF + addF} Filled</span> · <span style={{ color: '#ef4444' }}>{curE + addE} Empty</span>
+                      </div>
+                    )}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label className="form-label" style={{ fontSize: '0.78rem' }}>🟢 Filled Count</label>
+
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">🟢 Filled Cylinders to Add</label>
                       <input 
+                        className="form-control" 
                         type="number" 
-                        className="form-control form-control-sm"
-                        min="0"
-                        value={batchForm[type]?.filled ?? ''}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setBatchForm(prev => ({
-                            ...prev,
-                            [type]: { ...prev[type], filled: val }
-                          }));
-                        }}
+                        min="0" 
+                        value={addForm.filledAdd}
+                        onChange={e => setAddForm(f => ({ ...f, filledAdd: e.target.value }))} 
+                        placeholder="0" 
+                        autoFocus
                       />
                     </div>
-                    <div>
-                      <label className="form-label" style={{ fontSize: '0.78rem' }}>🔴 Empty Count</label>
+                    <div className="form-group">
+                      <label className="form-label">🔴 Empty Cylinders to Add</label>
                       <input 
+                        className="form-control" 
                         type="number" 
-                        className="form-control form-control-sm"
-                        min="0"
-                        value={batchForm[type]?.empty ?? ''}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setBatchForm(prev => ({
-                            ...prev,
-                            [type]: { ...prev[type], empty: val }
-                          }));
-                        }}
+                        min="0" 
+                        value={addForm.emptyAdd}
+                        onChange={e => setAddForm(f => ({ ...f, emptyAdd: e.target.value }))} 
+                        placeholder="0" 
                       />
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setBatchModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitBatchForm}>💾 Save All to Database</button>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => setAddModal(null)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={submitting}>
+                    {submitting ? '💾 Saving to DB...' : '💾 Save & Add to Stock'}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* MODAL 2: ADJUST / SET EXACT STOCK */}
+      {adjustModal && (() => {
+        const currentItem = stock.find(st => st.cylinderType === adjustModal) || { filledCount: 0, emptyCount: 0 };
+        const curF = Number(currentItem.filledCount) || 0;
+        const curE = Number(currentItem.emptyCount) || 0;
+
+        return (
+          <div className="modal-overlay" onClick={() => !submitting && setAdjustModal(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">✏️ Adjust Godown Count — {adjustModal} Cylinder</span>
+                <button className="modal-close" onClick={() => !submitting && setAdjustModal(null)}>×</button>
+              </div>
+              <form onSubmit={submitAdjust}>
+                <div className="modal-body">
+                  <div style={{ background: 'rgba(234, 88, 12, 0.08)', padding: '10px 14px', borderRadius: 8, marginBottom: 16, border: '1px solid rgba(234, 88, 12, 0.2)', fontSize: '0.85rem' }}>
+                    <div style={{ color: 'var(--text-secondary)' }}>
+                      Current Godown Count: <strong className="text-success">{curF} Filled</strong> · <strong style={{ color: '#ef4444' }}>{curE} Empty</strong>
+                    </div>
+                    <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      Directly sets the exact physical count in godown and saves to Supabase database.
+                    </p>
+                  </div>
+
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">🟢 Exact Filled Cylinders in Godown</label>
+                      <input 
+                        className="form-control" 
+                        type="number" 
+                        min="0" 
+                        value={adjustForm.filledCount}
+                        onChange={e => setAdjustForm(f => ({ ...f, filledCount: e.target.value }))} 
+                        autoFocus
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">🔴 Exact Empty Cylinders in Godown</label>
+                      <input 
+                        className="form-control" 
+                        type="number" 
+                        min="0" 
+                        value={adjustForm.emptyCount}
+                        onChange={e => setAdjustForm(f => ({ ...f, emptyCount: e.target.value }))} 
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => setAdjustModal(null)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={submitting}>
+                    {submitting ? '💾 Saving to DB...' : '💾 Save Exact Count'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

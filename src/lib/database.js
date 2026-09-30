@@ -287,16 +287,19 @@ export async function patchCustomer(id, updates) {
   if (updates.address !== undefined) dbUpdates.address = updates.address;
   if (updates.type !== undefined) dbUpdates.type = updates.type;
 
-  if (updates.prices !== undefined || updates.discounts !== undefined) {
+  if (updates.prices !== undefined || updates.discounts !== undefined || updates.discountAmounts !== undefined) {
     const curPrices = current.prices || {};
     const curDiscounts = curPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+    const curDiscountAmounts = curPrices.discountAmounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
     const newDiscounts = updates.discounts || updates.prices?.discounts || curDiscounts;
+    const newDiscountAmounts = updates.discountAmounts || updates.prices?.discountAmounts || curDiscountAmounts;
 
     dbUpdates.prices = {
-      '5kg': updates.prices?.['5kg'] !== undefined ? Number(updates.prices['5kg']) : (Number(curPrices['5kg']) || 450),
-      '19kg': updates.prices?.['19kg'] !== undefined ? Number(updates.prices['19kg']) : (Number(curPrices['19kg']) || 950),
-      '47.5kg': updates.prices?.['47.5kg'] !== undefined ? Number(updates.prices['47.5kg']) : (Number(curPrices['47.5kg']) || 2200),
+      '5kg': updates.prices?.['5kg'] !== undefined ? Number(updates.prices['5kg']) : (Number(curPrices['5kg']) || DEFAULT_MARKET_PRICES['5kg']),
+      '19kg': updates.prices?.['19kg'] !== undefined ? Number(updates.prices['19kg']) : (Number(curPrices['19kg']) || DEFAULT_MARKET_PRICES['19kg']),
+      '47.5kg': updates.prices?.['47.5kg'] !== undefined ? Number(updates.prices['47.5kg']) : (Number(curPrices['47.5kg']) || DEFAULT_MARKET_PRICES['47.5kg']),
       discounts: newDiscounts,
+      discountAmounts: newDiscountAmounts,
     };
   }
   
@@ -348,31 +351,56 @@ export async function updateAllCustomersWithNewMarketPrices(newMarketPrices, cus
 
   for (const c of customers) {
     const custDiscounts = c.discounts || c.prices?.discounts || {};
+    const custDiscountAmts = c.discountAmounts || c.prices?.discountAmounts || {};
     const newPrices = {};
     const newCustDiscounts = {};
+    const newCustDiscountAmts = {};
 
     CYLINDER_TYPES.forEach(type => {
       const newMkt = Number(newMarketPrices[type]) || 0;
+      const oldMktVal = Number(oldMarket[type]) || 0;
+      const oldPrice = Number(c.prices?.[type]) || 0;
+
+      let discountAmt = custDiscountAmts[type];
       let discountPct = custDiscounts[type];
 
-      // If no stored discount %, determine from old price vs old market price
-      if (discountPct === undefined || discountPct === null) {
-        const oldPrice = Number(c.prices?.[type]) || 0;
-        const oldMktVal = Number(oldMarket[type]) || 0;
+      // If discount amount was not explicitly saved, calculate from old market vs old price
+      if (discountAmt === undefined || discountAmt === null) {
         if (oldPrice > 0 && oldMktVal > 0 && oldPrice < oldMktVal) {
-          discountPct = Number((((oldMktVal - oldPrice) / oldMktVal) * 100).toFixed(2));
+          discountAmt = oldMktVal - oldPrice;
+        } else {
+          discountAmt = 0;
+        }
+      }
+
+      // If discount pct was not explicitly saved, calculate
+      if (discountPct === undefined || discountPct === null) {
+        if (oldMktVal > 0 && discountAmt > 0) {
+          discountPct = Number(((discountAmt / oldMktVal) * 100).toFixed(1));
         } else {
           discountPct = 0;
         }
       }
 
+      discountAmt = Math.max(0, Number(discountAmt) || 0);
       discountPct = Math.max(0, Math.min(100, Number(discountPct) || 0));
-      newCustDiscounts[type] = discountPct;
 
-      if (discountPct > 0) {
+      // Re-apply discount according to old calculation:
+      if (discountAmt > 0) {
+        // Customer has a saved rupee discount: decrease new market price by discount amount
+        newPrices[type] = Math.max(0, newMkt - discountAmt);
+        newCustDiscountAmts[type] = discountAmt;
+        newCustDiscounts[type] = newMkt > 0 ? Number(((discountAmt / newMkt) * 100).toFixed(1)) : 0;
+      } else if (discountPct > 0) {
+        // Customer has percentage discount: apply to new market price
         newPrices[type] = Math.max(0, Math.round(newMkt * (1 - discountPct / 100)));
+        newCustDiscounts[type] = discountPct;
+        newCustDiscountAmts[type] = Math.max(0, newMkt - newPrices[type]);
       } else {
+        // Standard customer (no discount): auto-update to full new market price!
         newPrices[type] = newMkt;
+        newCustDiscounts[type] = 0;
+        newCustDiscountAmts[type] = 0;
       }
     });
 
@@ -381,16 +409,19 @@ export async function updateAllCustomersWithNewMarketPrices(newMarketPrices, cus
         prices: {
           ...newPrices,
           discounts: newCustDiscounts,
+          discountAmounts: newCustDiscountAmts,
         },
         discounts: newCustDiscounts,
+        discountAmounts: newCustDiscountAmts,
       });
       updatedCustomers.push(patched);
     } catch (err) {
       console.error(`Failed to auto-update prices for customer ${c.name} (${c.id}):`, err);
       updatedCustomers.push({
         ...c,
-        prices: { ...newPrices, discounts: newCustDiscounts },
+        prices: { ...newPrices, discounts: newCustDiscounts, discountAmounts: newCustDiscountAmts },
         discounts: newCustDiscounts,
+        discountAmounts: newCustDiscountAmts,
       });
     }
   }
@@ -401,6 +432,7 @@ function mapCustomerFromDB(row) {
   const bal = row.bottle_balance || {};
   const rawPrices = row.prices || {};
   const discounts = rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+  const discountAmounts = rawPrices.discountAmounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
 
   return {
     id: row.id,
@@ -409,12 +441,14 @@ function mapCustomerFromDB(row) {
     address: row.address || '',
     type: row.type || 'Domestic',
     prices: {
-      '5kg': Number(rawPrices['5kg']) || 450,
-      '19kg': Number(rawPrices['19kg']) || 950,
-      '47.5kg': Number(rawPrices['47.5kg']) || 2200,
+      '5kg': rawPrices['5kg'] !== undefined ? Number(rawPrices['5kg']) : DEFAULT_MARKET_PRICES['5kg'],
+      '19kg': rawPrices['19kg'] !== undefined ? Number(rawPrices['19kg']) : DEFAULT_MARKET_PRICES['19kg'],
+      '47.5kg': rawPrices['47.5kg'] !== undefined ? Number(rawPrices['47.5kg']) : DEFAULT_MARKET_PRICES['47.5kg'],
       discounts: discounts,
+      discountAmounts: discountAmounts,
     },
     discounts: discounts,
+    discountAmounts: discountAmounts,
     bottleBalance: {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0 },
       '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0 },
@@ -433,6 +467,7 @@ function mapCustomerToDB(customer) {
   const stock = customer.emptyBottleStock || {};
   const rawPrices = customer.prices || {};
   const discounts = customer.discounts || rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+  const discountAmounts = customer.discountAmounts || rawPrices.discountAmounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
 
   return {
     name: customer.name,
@@ -440,10 +475,11 @@ function mapCustomerToDB(customer) {
     address: customer.address || '',
     type: customer.type || 'Domestic',
     prices: {
-      '5kg': Number(rawPrices['5kg']) || 450,
-      '19kg': Number(rawPrices['19kg']) || 950,
-      '47.5kg': Number(rawPrices['47.5kg']) || 2200,
+      '5kg': rawPrices['5kg'] !== undefined ? Number(rawPrices['5kg']) : DEFAULT_MARKET_PRICES['5kg'],
+      '19kg': rawPrices['19kg'] !== undefined ? Number(rawPrices['19kg']) : DEFAULT_MARKET_PRICES['19kg'],
+      '47.5kg': rawPrices['47.5kg'] !== undefined ? Number(rawPrices['47.5kg']) : DEFAULT_MARKET_PRICES['47.5kg'],
       discounts: discounts,
+      discountAmounts: discountAmounts,
     },
     bottle_balance: {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0, stock: stock['5kg'] || { withCustomer: 0, collected: 0 } },

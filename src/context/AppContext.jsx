@@ -423,18 +423,25 @@ export function AppProvider({ children }) {
   const addStockManual = async (cylinderType, filledAdd, emptyAdd) => {
     return withLoading(async () => {
       const s = stock.find(st => st.cylinderType === cylinderType);
-      if (!s) return;
+      const currentFilled = s ? (Number(s.filledCount) || 0) : 0;
+      const currentEmpty = s ? (Number(s.emptyCount) || 0) : 0;
 
-      const newFilled = s.filledCount + Number(filledAdd);
-      const newEmpty = s.emptyCount + Number(emptyAdd);
+      const newFilled = Math.max(0, currentFilled + Number(filledAdd || 0));
+      const newEmpty = Math.max(0, currentEmpty + Number(emptyAdd || 0));
 
       try {
         await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
-        setStock(prev => prev.map(st =>
-          st.cylinderType === cylinderType
-            ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
-            : st
-        ));
+        setStock(prev => {
+          const exists = prev.some(st => st.cylinderType === cylinderType);
+          if (exists) {
+            return prev.map(st =>
+              st.cylinderType === cylinderType
+                ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
+                : st
+            );
+          }
+          return [...prev, { cylinderType, filledCount: newFilled, emptyCount: newEmpty }];
+        });
       } catch (err) {
         console.error('Failed to add stock:', err);
       }
@@ -464,8 +471,8 @@ export function AppProvider({ children }) {
     }, 'Updating Cylinder Stock...', 'Saving new inventory counts');
   };
 
-  const refreshStock = async () => {
-    return withLoading(async () => {
+  const refreshStock = async (silent = false) => {
+    const doFetch = async () => {
       try {
         const fresh = await db.fetchStock();
         setStock(fresh || []);
@@ -474,7 +481,12 @@ export function AppProvider({ children }) {
         console.error('Failed to refresh stock:', err);
         return stock;
       }
-    }, 'Syncing Cylinder Stock...', 'Fetching freshest variety counts from database');
+    };
+
+    if (silent) {
+      return doFetch();
+    }
+    return withLoading(doFetch, 'Syncing Cylinder Stock...', 'Fetching freshest variety counts from database');
   };
 
   const getCylinderMetrics = useCallback(() => {
@@ -1077,15 +1089,17 @@ export function AppProvider({ children }) {
     }, 'Updating Market Prices...', 'Calculating rates and customer discounts');
   };
 
-  const updateCustomerDiscounts = async (customerId, discounts, customPrices) => {
+  const updateCustomerDiscounts = async (customerId, discounts, customPrices, discountAmounts = {}) => {
     return withLoading(async () => {
       try {
         const updatedCust = await db.patchCustomer(customerId, {
           prices: {
             ...customPrices,
             discounts,
+            discountAmounts,
           },
           discounts,
+          discountAmounts,
         });
         setCustomers(prev => prev.map(c => c.id === customerId ? updatedCust : c));
         return updatedCust;

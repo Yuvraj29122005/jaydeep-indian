@@ -112,14 +112,20 @@ export default function Customers() {
 
   // Open Add Customer Modal
   const openAdd = () => {
+    const initPrices = {};
+    const initDiscounts = {};
+    const initDiscountAmts = {};
+    CYLINDER_TYPES.forEach(t => {
+      initPrices[t] = Number(marketPrices[t]) || DEFAULT_MARKET_PRICES[t];
+      initDiscounts[t] = 0;
+      initDiscountAmts[t] = 0;
+    });
+
     setForm({
       name: '', phone: '', address: '', type: 'Domestic',
-      prices: {
-        '5kg': marketPrices['5kg'] || 500,
-        '19kg': marketPrices['19kg'] || 1000,
-        '47.5kg': marketPrices['47.5kg'] || 2300,
-      },
-      discounts: { '5kg': 0, '19kg': 0, '47.5kg': 0 }
+      prices: initPrices,
+      discounts: initDiscounts,
+      discountAmounts: initDiscountAmts,
     });
     setEditId(null);
     setModal('add');
@@ -128,14 +134,24 @@ export default function Customers() {
   // Open Edit Customer Modal
   const openEdit = (c) => {
     const custDiscounts = {};
+    const custDiscountAmts = {};
+    const custPrices = {};
+
     CYLINDER_TYPES.forEach(t => {
-      if (c.discounts?.[t] !== undefined) {
-        custDiscounts[t] = c.discounts[t];
-      } else {
-        const mkt = Number(marketPrices[t]) || 0;
-        const p = c.prices?.[t] !== undefined ? Number(c.prices[t]) : mkt;
-        custDiscounts[t] = mkt > 0 && p < mkt ? Number((((mkt - p) / mkt) * 100).toFixed(1)) : 0;
+      const mkt = Number(marketPrices[t]) || DEFAULT_MARKET_PRICES[t];
+      const p = c.prices?.[t] !== undefined ? Number(c.prices[t]) : mkt;
+      custPrices[t] = p;
+
+      let amt = c.discountAmounts?.[t] !== undefined
+        ? Number(c.discountAmounts[t])
+        : (c.prices?.discountAmounts?.[t] !== undefined ? Number(c.prices.discountAmounts[t]) : Math.max(0, mkt - p));
+      custDiscountAmts[t] = amt;
+
+      let pct = c.discounts?.[t] !== undefined ? c.discounts[t] : c.prices?.discounts?.[t];
+      if (pct === undefined || pct === null) {
+        pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
       }
+      custDiscounts[t] = Number(pct);
     });
 
     setForm({
@@ -143,11 +159,55 @@ export default function Customers() {
       phone: c.phone,
       address: c.address,
       type: c.type,
-      prices: { ...c.prices },
+      prices: custPrices,
       discounts: custDiscounts,
+      discountAmounts: custDiscountAmts,
     });
     setEditId(c.id);
     setModal('edit');
+  };
+
+  // Add/Edit Customer pricing synchronization handlers:
+  const handleFormDiscountAmtChange = (type, val) => {
+    const amt = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices[type]) || DEFAULT_MARKET_PRICES[type];
+    const newPrice = Math.max(0, mkt - amt);
+    const newPct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setForm(f => ({
+      ...f,
+      prices: { ...f.prices, [type]: newPrice },
+      discounts: { ...(f.discounts || {}), [type]: newPct },
+      discountAmounts: { ...(f.discountAmounts || {}), [type]: amt },
+    }));
+  };
+
+  const handleFormPriceChange = (type, val) => {
+    const p = Math.max(0, Number(val) || 0);
+    const mkt = Number(marketPrices[type]) || DEFAULT_MARKET_PRICES[type];
+    const amt = Math.max(0, mkt - p);
+    const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
+
+    setForm(f => ({
+      ...f,
+      prices: { ...f.prices, [type]: p },
+      discounts: { ...(f.discounts || {}), [type]: pct },
+      discountAmounts: { ...(f.discountAmounts || {}), [type]: amt },
+    }));
+  };
+
+  const handleFormDiscountPctChange = (type, val) => {
+    const pct = Math.max(0, Math.min(100, Number(val) || 0));
+    const mkt = Number(marketPrices[type]) || DEFAULT_MARKET_PRICES[type];
+    const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
+    const amt = Math.max(0, mkt - p);
+
+    setForm(f => ({
+      ...f,
+      prices: { ...f.prices, [type]: p },
+      discounts: { ...(f.discounts || {}), [type]: pct },
+      discountAmounts: { ...(f.discountAmounts || {}), [type]: amt },
+    }));
   };
 
   const openView = (c) => {
@@ -281,7 +341,7 @@ export default function Customers() {
     if (!discountModalCust) return;
     setDiscountSaving(true);
     try {
-      await updateCustomerDiscounts(discountModalCust.id, discountForm.discounts, discountForm.prices);
+      await updateCustomerDiscounts(discountModalCust.id, discountForm.discounts, discountForm.prices, discountForm.discountAmounts);
       setDiscountSuccess(true);
       setTimeout(() => {
         setDiscountSuccess(false);
@@ -830,7 +890,23 @@ export default function Customers() {
 
                       <div className="pricing-modal-grid">
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--accent)' }}>
+                            ✂️ Discount Amount (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curDiscountAmt === 0 ? '' : curDiscountAmt}
+                            placeholder="0"
+                            onChange={e => handleCustomerDiscountAmtChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--success)' }}>
+                            💰 Customer Price (₹)
+                          </label>
                           <input
                             type="number"
                             min="0"
@@ -841,35 +917,29 @@ export default function Customers() {
                           />
                         </div>
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>🏷️ Discount (%)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600 }}>
+                            🏷️ Discount (%)
+                          </label>
                           <input
                             type="number"
                             min="0"
                             max="100"
                             step="0.1"
                             className="form-control"
-                            value={curDiscountPct}
+                            value={curDiscountPct === 0 ? '' : curDiscountPct}
+                            placeholder="0%"
                             onChange={e => handleCustomerDiscountPctChange(type, e.target.value)}
-                            style={{ fontWeight: 700 }}
-                          />
-                        </div>
-                        <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>✂️ Discount Amount (₹)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            className="form-control"
-                            value={curDiscountAmt}
-                            onChange={e => handleCustomerDiscountAmtChange(type, e.target.value)}
                             style={{ fontWeight: 700 }}
                           />
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                        <span>Savings:</span>
+                      <div style={{ marginTop: 8, padding: '5px 10px', background: curDiscountAmt > 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(0,0,0,0.02)', borderRadius: 6, fontSize: '0.76rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Rate:</span>
                         <span style={{ fontWeight: 600, color: curDiscountAmt > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
-                          {curDiscountAmt > 0 ? `Customer saves ₹${curDiscountAmt} (${curDiscountPct}%) per cylinder` : 'Standard market rate (0% discount)'}
+                          {curDiscountAmt > 0 
+                            ? `Market ₹${mkt} − ₹${curDiscountAmt} Discount ➡️ Customer Price ₹${curPrice} (${curDiscountPct}% OFF)`
+                            : `Standard Market Rate: ₹${mkt} (No discount)`}
                         </span>
                       </div>
                     </div>
@@ -927,79 +997,69 @@ export default function Customers() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {CYLINDER_TYPES.map(type => {
-                  const mkt = Number(marketPrices[type]) || 0;
+                  const mkt = Number(marketPrices[type]) || DEFAULT_MARKET_PRICES[type];
                   const curPrice = form.prices?.[type] !== undefined ? form.prices[type] : mkt;
-                  const curDiscountPct = form.discounts?.[type] !== undefined ? form.discounts[type] : (mkt > 0 && curPrice < mkt ? Number((((mkt - curPrice) / mkt) * 100).toFixed(1)) : 0);
-                  const curDiscountAmt = Math.max(0, mkt - curPrice);
+                  const curDiscountAmt = form.discountAmounts?.[type] !== undefined ? form.discountAmounts[type] : Math.max(0, mkt - curPrice);
+                  const curDiscountPct = form.discounts?.[type] !== undefined ? form.discounts[type] : (mkt > 0 && curDiscountAmt > 0 ? Number(((curDiscountAmt / mkt) * 100).toFixed(1)) : 0);
 
                   return (
-                    <div key={type} style={{ padding: 12, background: 'var(--bg-body)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.86rem' }}>{CYL_ICONS[type]} {type} Cylinder</span>
-                        <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>Market Rate: ₹{mkt}</span>
+                    <div key={type} style={{ padding: 14, background: 'var(--bg-body)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{CYL_ICONS[type]} {type} Cylinder</span>
+                        <span className="badge badge-info" style={{ fontSize: '0.74rem' }}>Benchmark Market: ₹{mkt}</span>
                       </div>
                       <div className="pricing-modal-grid">
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Price (₹)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--accent)' }}>
+                            ✂️ Discount Amount (₹)
+                          </label>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={curDiscountAmt === 0 ? '' : curDiscountAmt}
+                            placeholder="0"
+                            onChange={e => handleFormDiscountAmtChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--success)' }}>
+                            💰 Customer Price (₹)
+                          </label>
                           <input
                             className="form-control"
                             type="number"
                             min="0"
                             value={curPrice}
-                            onChange={e => {
-                              const p = Math.max(0, Number(e.target.value) || 0);
-                              const amt = mkt - p;
-                              const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
-                              setForm(f => ({
-                                ...f,
-                                prices: { ...f.prices, [type]: p },
-                                discounts: { ...(f.discounts || {}), [type]: pct }
-                              }));
-                            }}
-                            style={{ fontWeight: 600 }}
+                            onChange={e => handleFormPriceChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
                           />
                         </div>
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Discount (%)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600 }}>
+                            🏷️ Discount (%)
+                          </label>
                           <input
                             className="form-control"
                             type="number"
                             min="0"
                             max="100"
                             step="0.1"
-                            value={curDiscountPct}
-                            onChange={e => {
-                              const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-                              const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
-                              setForm(f => ({
-                                ...f,
-                                prices: { ...f.prices, [type]: p },
-                                discounts: { ...(f.discounts || {}), [type]: pct }
-                              }));
-                            }}
-                            style={{ fontWeight: 600 }}
+                            value={curDiscountPct === 0 ? '' : curDiscountPct}
+                            placeholder="0%"
+                            onChange={e => handleFormDiscountPctChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
                           />
                         </div>
-                        <div>
-                          <label className="form-label" style={{ fontSize: '0.72rem' }}>Discount (₹)</label>
-                          <input
-                            className="form-control"
-                            type="number"
-                            min="0"
-                            value={curDiscountAmt}
-                            onChange={e => {
-                              const amt = Math.max(0, Number(e.target.value) || 0);
-                              const p = Math.max(0, mkt - amt);
-                              const pct = mkt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
-                              setForm(f => ({
-                                ...f,
-                                prices: { ...f.prices, [type]: p },
-                                discounts: { ...(f.discounts || {}), [type]: pct }
-                              }));
-                            }}
-                            style={{ fontWeight: 600 }}
-                          />
-                        </div>
+                      </div>
+                      <div style={{ marginTop: 8, padding: '5px 10px', background: curDiscountAmt > 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(0,0,0,0.02)', borderRadius: 6, fontSize: '0.76rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Rate:</span>
+                        <span style={{ fontWeight: 600, color: curDiscountAmt > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                          {curDiscountAmt > 0 
+                            ? `Market ₹${mkt} − ₹${curDiscountAmt} Discount ➡️ Customer Price ₹${curPrice} (${curDiscountPct}% OFF)`
+                            : `Standard Market Rate: ₹${mkt} (No discount)`}
+                        </span>
                       </div>
                     </div>
                   );

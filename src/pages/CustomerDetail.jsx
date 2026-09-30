@@ -41,12 +41,16 @@ export default function CustomerDetail() {
       const p = customer.prices?.[t] !== undefined ? Number(customer.prices[t]) : mkt;
       prices[t] = p;
 
-      let pct = customer.discounts?.[t];
+      let amt = customer.discountAmounts?.[t] !== undefined
+        ? Number(customer.discountAmounts[t])
+        : (customer.prices?.discountAmounts?.[t] !== undefined ? Number(customer.prices.discountAmounts[t]) : Math.max(0, mkt - p));
+      amounts[t] = amt;
+
+      let pct = customer.discounts?.[t] !== undefined ? customer.discounts[t] : customer.prices?.discounts?.[t];
       if (pct === undefined || pct === null) {
-        pct = mkt > 0 && p < mkt ? Number((((mkt - p) / mkt) * 100).toFixed(1)) : 0;
+        pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
       }
       discounts[t] = Number(pct);
-      amounts[t] = Math.max(0, mkt - p);
     });
 
     setEditPrices(prices);
@@ -59,23 +63,23 @@ export default function CustomerDetail() {
   const handlePriceChange = (type, val) => {
     const p = Math.max(0, Number(val) || 0);
     const mkt = Number(marketPrices?.[type]) || 0;
-    const amt = mkt - p;
+    const amt = Math.max(0, mkt - p);
     const pct = mkt > 0 && amt > 0 ? Number(((amt / mkt) * 100).toFixed(1)) : 0;
 
     setEditPrices(prev => ({ ...prev, [type]: p }));
     setEditDiscounts(prev => ({ ...prev, [type]: pct }));
-    setEditDiscountAmts(prev => ({ ...prev, [type]: Math.max(0, amt) }));
+    setEditDiscountAmts(prev => ({ ...prev, [type]: amt }));
   };
 
   const handleDiscountPctChange = (type, val) => {
     const pct = Math.max(0, Math.min(100, Number(val) || 0));
     const mkt = Number(marketPrices?.[type]) || 0;
     const p = Math.max(0, Math.round(mkt * (1 - pct / 100)));
-    const amt = mkt - p;
+    const amt = Math.max(0, mkt - p);
 
     setEditPrices(prev => ({ ...prev, [type]: p }));
     setEditDiscounts(prev => ({ ...prev, [type]: pct }));
-    setEditDiscountAmts(prev => ({ ...prev, [type]: Math.max(0, amt) }));
+    setEditDiscountAmts(prev => ({ ...prev, [type]: amt }));
   };
 
   const handleDiscountAmtChange = (type, val) => {
@@ -93,7 +97,7 @@ export default function CustomerDetail() {
     if (!customer) return;
     setSavingDiscount(true);
     try {
-      await updateCustomerDiscounts(customer.id, editDiscounts, editPrices);
+      await updateCustomerDiscounts(customer.id, editDiscounts, editPrices, editDiscountAmts);
       setSaveSuccess(true);
       setTimeout(() => {
         setSaveSuccess(false);
@@ -652,7 +656,23 @@ export default function CustomerDetail() {
 
                       <div className="pricing-modal-grid">
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--accent)' }}>
+                            ✂️ Discount Amount (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="form-control"
+                            value={curDiscountAmt === 0 ? '' : curDiscountAmt}
+                            placeholder="0"
+                            onChange={e => handleDiscountAmtChange(type, e.target.value)}
+                            style={{ fontWeight: 700 }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--success)' }}>
+                            💰 Customer Price (₹)
+                          </label>
                           <input
                             type="number"
                             min="0"
@@ -663,35 +683,29 @@ export default function CustomerDetail() {
                           />
                         </div>
                         <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>🏷️ Discount (%)</label>
+                          <label className="form-label" style={{ fontSize: '0.74rem', fontWeight: 600 }}>
+                            🏷️ Discount (%)
+                          </label>
                           <input
                             type="number"
                             min="0"
                             max="100"
                             step="0.1"
                             className="form-control"
-                            value={curDiscountPct}
+                            value={curDiscountPct === 0 ? '' : curDiscountPct}
+                            placeholder="0%"
                             onChange={e => handleDiscountPctChange(type, e.target.value)}
-                            style={{ fontWeight: 700 }}
-                          />
-                        </div>
-                        <div>
-                          <label className="form-label" style={{ fontSize: '0.74rem' }}>✂️ Discount Amount (₹)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            className="form-control"
-                            value={curDiscountAmt}
-                            onChange={e => handleDiscountAmtChange(type, e.target.value)}
                             style={{ fontWeight: 700 }}
                           />
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                        <span>Savings:</span>
+                      <div style={{ marginTop: 8, padding: '5px 10px', background: curDiscountAmt > 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(0,0,0,0.02)', borderRadius: 6, fontSize: '0.76rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Rate:</span>
                         <span style={{ fontWeight: 600, color: curDiscountAmt > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
-                          {curDiscountAmt > 0 ? `Customer saves ₹${curDiscountAmt} (${curDiscountPct}%) per cylinder` : 'Standard market rate (0% discount)'}
+                          {curDiscountAmt > 0 
+                            ? `Market ₹${mkt} − ₹${curDiscountAmt} Discount ➡️ Customer Price ₹${curPrice} (${curDiscountPct}% OFF)`
+                            : `Standard Market Rate: ₹${mkt} (No discount)`}
                         </span>
                       </div>
                     </div>

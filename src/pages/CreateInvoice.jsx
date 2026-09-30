@@ -18,7 +18,7 @@ export default function CreateInvoice() {
   const { id } = useParams();
   const isEditing = Boolean(id);
   const location = useLocation();
-  const { customers, createInvoice, editInvoiceFull, getStockByType, invoices, agencySettings } = useApp();
+  const { customers, createInvoice, editInvoiceFull, getStockByType, invoices, agencySettings, marketPrices } = useApp();
   const navigate = useNavigate();
 
   const [invoiceType, setInvoiceType] = useState('Standard');
@@ -222,10 +222,16 @@ export default function CreateInvoice() {
       if (invoiceType === 'Empty Bottle') {
         autoFillPendingBottles(cust);
       } else {
-        setItems(items.map(item => ({
-          ...item,
-          unitPrice: cust.prices[item.cylinderType] || 0,
-        })));
+        setItems(items.map(item => {
+          const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
+          const custPrice = cust.prices?.[item.cylinderType] !== undefined && Number(cust.prices[item.cylinderType]) > 0
+            ? Number(cust.prices[item.cylinderType])
+            : mkt;
+          return {
+            ...item,
+            unitPrice: custPrice,
+          };
+        }));
       }
     }
   };
@@ -235,7 +241,11 @@ export default function CreateInvoice() {
       const updated = [...prev];
       updated[idx] = { ...updated[idx], [field]: val };
       if (field === 'cylinderType' && selectedCustomer && invoiceType === 'Standard') {
-        updated[idx].unitPrice = selectedCustomer.prices[val] || 0;
+        const mkt = Number(marketPrices?.[val]) || 0;
+        const custPrice = selectedCustomer.prices?.[val] !== undefined && Number(selectedCustomer.prices[val]) > 0
+          ? Number(selectedCustomer.prices[val])
+          : mkt;
+        updated[idx].unitPrice = custPrice;
       }
       if (field === 'qty') {
         const numVal = val === '' ? '' : Number(val);
@@ -266,7 +276,11 @@ export default function CreateInvoice() {
     const isEB = invoiceType === 'Empty Bottle';
     const newItem = blankItem(isEB);
     if (selectedCustomer && !isEB) {
-      newItem.unitPrice = selectedCustomer.prices[newItem.cylinderType] || 0;
+      const mkt = Number(marketPrices?.[newItem.cylinderType]) || 0;
+      const custPrice = selectedCustomer.prices?.[newItem.cylinderType] !== undefined && Number(selectedCustomer.prices[newItem.cylinderType]) > 0
+        ? Number(selectedCustomer.prices[newItem.cylinderType])
+        : mkt;
+      newItem.unitPrice = custPrice;
     }
     setItems(prev => [...prev, newItem]);
   };
@@ -682,6 +696,90 @@ export default function CreateInvoice() {
                     <div className="full" style={{ gridColumn: '1/-1' }}><span className="text-muted">Address: </span><strong>{selectedCustomer.address}</strong></div>
                   </div>
 
+                  {/* ==================== CUSTOMER PRICING SUMMARY CARD ==================== */}
+                  {invoiceType === 'Standard' && (
+                    <div style={{
+                      marginTop: 14, padding: 12,
+                      background: 'linear-gradient(135deg, rgba(234,88,12,0.04) 0%, rgba(249,115,22,0.08) 100%)',
+                      borderRadius: 8,
+                      border: '1px solid rgba(234,88,12,0.18)',
+                    }}>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        marginBottom: 10
+                      }}>
+                        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary, #ea580c)' }}>
+                          💰 Customer Pricing (Auto-Applied)
+                        </div>
+                        {CYLINDER_TYPES.some(t => {
+                          const mkt = Number(marketPrices?.[t]) || 0;
+                          const cp = Number(selectedCustomer.prices?.[t]) || mkt;
+                          return cp < mkt;
+                        }) && (
+                          <span style={{
+                            fontSize: '0.68rem', fontWeight: 700,
+                            color: '#16a34a', background: 'rgba(34,197,94,0.1)',
+                            padding: '2px 8px', borderRadius: 20,
+                          }}>🏷️ Discounted Customer</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                        {CYLINDER_TYPES.map(t => {
+                          const mkt = Number(marketPrices?.[t]) || 0;
+                          const custPrice = Number(selectedCustomer.prices?.[t]) || mkt;
+                          const discountAmt = mkt - custPrice;
+                          const discountPct = mkt > 0 ? ((discountAmt / mkt) * 100).toFixed(1) : 0;
+                          const hasDiscount = discountAmt > 0;
+
+                          return (
+                            <div key={t} style={{
+                              padding: '8px 10px', borderRadius: 6,
+                              background: hasDiscount ? 'rgba(34,197,94,0.06)' : 'var(--bg-card)',
+                              border: `1px solid ${hasDiscount ? 'rgba(34,197,94,0.2)' : 'var(--border)'}`,
+                              textAlign: 'center',
+                            }}>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+                                {t}
+                              </div>
+                              <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                ₹{custPrice.toLocaleString('en-IN')}
+                              </div>
+                              {hasDiscount ? (
+                                <>
+                                  <div style={{
+                                    fontSize: '0.68rem', color: 'var(--text-muted)',
+                                    textDecoration: 'line-through', marginTop: 2
+                                  }}>
+                                    MRP ₹{mkt.toLocaleString('en-IN')}
+                                  </div>
+                                  <div style={{
+                                    display: 'flex', gap: 4, justifyContent: 'center',
+                                    alignItems: 'center', marginTop: 3
+                                  }}>
+                                    <span style={{
+                                      fontSize: '0.65rem', fontWeight: 700, color: '#16a34a',
+                                      background: 'rgba(34,197,94,0.12)', padding: '1px 6px',
+                                      borderRadius: 10
+                                    }}>
+                                      -{discountPct}%
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', color: '#16a34a', fontWeight: 600 }}>
+                                      Save ₹{discountAmt.toLocaleString('en-IN')}
+                                    </span>
+                                  </div>
+                                </>
+                              ) : (
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                  Market Price
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Bottle Status overview */}
                   <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     {/* Filled Sold */}
@@ -831,7 +929,7 @@ export default function CreateInvoice() {
                       </div>
                     ) : (
                       <>
-                        {/* Unit Price / Rate */}
+                        {/* Unit Price / Rate with Discount Info */}
                         <div>
                           <input
                             className="form-control"
@@ -840,7 +938,46 @@ export default function CreateInvoice() {
                             value={item.unitPrice}
                             onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
                             placeholder="₹0"
+                            style={{
+                              borderColor: (() => {
+                                if (!selectedCustomer) return undefined;
+                                const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
+                                const cp = Number(item.unitPrice) || 0;
+                                return mkt > 0 && cp < mkt ? 'rgba(34,197,94,0.5)' : undefined;
+                              })()
+                            }}
                           />
+                          {/* Discount indicator below price */}
+                          {selectedCustomer && (() => {
+                            const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
+                            const cp = Number(item.unitPrice) || 0;
+                            const discAmt = mkt - cp;
+                            const discPct = mkt > 0 ? ((discAmt / mkt) * 100).toFixed(1) : 0;
+                            if (mkt > 0 && discAmt > 0) {
+                              return (
+                                <div style={{
+                                  display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 3, alignItems: 'center'
+                                }}>
+                                  <span style={{
+                                    fontSize: '0.62rem', color: 'var(--text-muted)',
+                                    textDecoration: 'line-through'
+                                  }}>₹{mkt}</span>
+                                  <span style={{
+                                    fontSize: '0.58rem', fontWeight: 700, color: '#16a34a',
+                                    background: 'rgba(34,197,94,0.1)', padding: '0px 4px',
+                                    borderRadius: 8, lineHeight: '14px'
+                                  }}>-{discPct}%</span>
+                                </div>
+                              );
+                            } else if (mkt > 0 && cp === mkt) {
+                              return (
+                                <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                  MRP ₹{mkt}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                           {errors[`price_${idx}`] && <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>{errors[`price_${idx}`]}</div>}
                         </div>
 
@@ -1013,6 +1150,32 @@ export default function CreateInvoice() {
                       <span>Total Amount</span>
                       <span>₹{totalAmount.toLocaleString('en-IN')}</span>
                     </div>
+                    {/* Total Savings from customer discount */}
+                    {selectedCustomer && (() => {
+                      const totalSavings = items.reduce((sum, item) => {
+                        const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
+                        const cp = Number(item.unitPrice) || 0;
+                        const qty = Number(item.qty) || 0;
+                        return sum + Math.max(0, (mkt - cp) * qty);
+                      }, 0);
+                      if (totalSavings > 0) {
+                        return (
+                          <div className="total-row" style={{
+                            color: '#16a34a',
+                            background: 'rgba(34,197,94,0.06)',
+                            padding: '4px 8px',
+                            borderRadius: 6,
+                            marginTop: 4,
+                          }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              🏷️ Customer Savings
+                            </span>
+                            <span style={{ fontWeight: 700 }}>₹{totalSavings.toLocaleString('en-IN')}</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                     <div className="total-row" style={{ color: 'var(--success)' }}>
                       <span>Paid Amount</span>
                       <span>₹{(Number(paidAmount) || 0).toLocaleString('en-IN')}</span>
