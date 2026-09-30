@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { promptAppInstall } from './InstallAppBanner';
 
 const allNavItems = [
   { to: '/dashboard', icon: '📊', label: 'Dashboard', module: 'dashboard' },
@@ -14,11 +15,11 @@ const allNavItems = [
   { to: '/notes', icon: '📝', label: 'Personal Notes', module: 'notes' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }) {
   const { logout, currentUser, hasModuleAccess, agencySettings } = useApp();
   const navigate = useNavigate();
 
-  // Collapsed sidebar state with localStorage persistence
+  // Collapsed sidebar state with localStorage persistence for desktop
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('jig_sidebar_collapsed') === 'true';
@@ -33,25 +34,32 @@ export default function Sidebar() {
   }, [collapsed]);
 
   const handleLogout = () => {
+    if (onCloseMobile) onCloseMobile();
     logout();
     navigate('/login');
+  };
+
+  const handleItemClick = () => {
+    if (onCloseMobile) {
+      onCloseMobile();
+    }
   };
 
   const visibleNavItems = allNavItems.filter(item => hasModuleAccess(item.module));
 
   const roleBadge = (role) => {
-    if (role === 'admin') return <span className="badge badge-danger" style={{ fontSize: '0.65rem' }}>👑 Admin</span>;
-    if (role === 'visitor') return <span className="badge badge-info" style={{ fontSize: '0.65rem' }}>👁️ Visitor</span>;
-    return <span className="badge badge-primary" style={{ fontSize: '0.65rem' }}>👷 Staff</span>;
+    if (role === 'admin') return <span className="badge badge-danger" style={{ fontSize: '0.68rem', fontWeight: 800 }}>👑 Admin</span>;
+    if (role === 'visitor') return <span className="badge badge-info" style={{ fontSize: '0.68rem', fontWeight: 800 }}>👁️ Visitor</span>;
+    return <span className="badge badge-primary" style={{ fontSize: '0.68rem', fontWeight: 800 }}>👷 Staff</span>;
   };
 
   return (
-    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
-      {/* Floating Edge Toggle Tab on Right Border */}
+    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''} ${mobileOpen ? 'sidebar-mobile-open' : ''}`}>
+      {/* Floating Edge Toggle Tab on Right Border (Desktop only) */}
       <button
-        className="sidebar-edge-toggle-btn"
+        className="sidebar-edge-toggle-btn desktop-only"
         onClick={() => setCollapsed(prev => !prev)}
-        title={collapsed ? 'Maximize sidebar (Show menu names)' : 'Minimize sidebar (Show icons only)'}
+        title={collapsed ? 'Maximize sidebar' : 'Minimize sidebar'}
         aria-label={collapsed ? 'Maximize sidebar' : 'Minimize sidebar'}
       >
         {collapsed ? (
@@ -70,14 +78,14 @@ export default function Sidebar() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <div style={{
-              width: 36, height: 36,
-              background: 'linear-gradient(135deg, #f59e0b, #dc2626)',
+              width: 38, height: 38,
+              background: 'linear-gradient(135deg, #f59e0b, #ea580c, #dc2626)',
               borderRadius: 10,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '1.2rem', flexShrink: 0,
-              boxShadow: '0 4px 10px rgba(245, 158, 11, 0.35)'
+              fontSize: '1.25rem', flexShrink: 0,
+              boxShadow: '0 4px 12px rgba(234, 88, 12, 0.35)'
             }}>🔥</div>
-            {!collapsed && (
+            {(!collapsed || mobileOpen) && (
               <div style={{ minWidth: 0 }}>
                 <div className="sidebar-brand-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {agencySettings?.agencyName?.split(' ')[0] || 'JAYDEEP'}
@@ -89,12 +97,22 @@ export default function Sidebar() {
             )}
           </div>
 
-          {/* Top Header Minimize Button when Expanded */}
+          {/* Mobile Close Drawer Button */}
+          <button
+            className="sidebar-mobile-close-btn mobile-only"
+            onClick={onCloseMobile}
+            title="Close Menu"
+            aria-label="Close Menu"
+          >
+            ✕
+          </button>
+
+          {/* Desktop Top Header Minimize Button when Expanded */}
           {!collapsed && (
             <button
-              className="sidebar-header-toggle-btn"
+              className="sidebar-header-toggle-btn desktop-only"
               onClick={() => setCollapsed(true)}
-              title="Minimize Sidebar (Collapse)"
+              title="Minimize Sidebar"
               aria-label="Minimize Sidebar"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -105,12 +123,12 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* Maximize Button in Header when Collapsed */}
+        {/* Maximize Button in Header when Collapsed (Desktop only) */}
         {collapsed && (
           <button
-            className="sidebar-collapsed-expand-btn"
+            className="sidebar-collapsed-expand-btn desktop-only"
             onClick={() => setCollapsed(false)}
-            title="Maximize Sidebar (Show menu names)"
+            title="Maximize Sidebar"
             aria-label="Maximize Sidebar"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -122,38 +140,41 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {!collapsed && <div className="nav-section-label">Main Menu</div>}
+        {(!collapsed || mobileOpen) && <div className="nav-section-label">Main Menu</div>}
         {visibleNavItems.map(item => (
           <NavLink
             key={item.to}
             to={item.to}
+            onClick={handleItemClick}
             className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-            title={collapsed ? item.label : undefined}
+            title={collapsed && !mobileOpen ? item.label : undefined}
           >
             <span className="nav-icon">{item.icon}</span>
-            {!collapsed && <span className="nav-label">{item.label}</span>}
+            {(!collapsed || mobileOpen) && <span className="nav-label">{item.label}</span>}
           </NavLink>
         ))}
 
         {(currentUser?.role === 'admin' || hasModuleAccess('settings')) && (
           <>
-            {!collapsed && <div className="nav-section-label" style={{ marginTop: 14 }}>Administration</div>}
+            {(!collapsed || mobileOpen) && <div className="nav-section-label" style={{ marginTop: 14 }}>Administration</div>}
             <NavLink
               to="/settings"
+              onClick={handleItemClick}
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-              title={collapsed ? 'Agency Settings' : undefined}
+              title={collapsed && !mobileOpen ? 'Agency Settings' : undefined}
             >
               <span className="nav-icon">⚙️</span>
-              {!collapsed && <span className="nav-label">Agency Settings</span>}
+              {(!collapsed || mobileOpen) && <span className="nav-label">Agency Settings</span>}
             </NavLink>
             {currentUser?.role === 'admin' && (
               <NavLink
                 to="/users"
+                onClick={handleItemClick}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-                title={collapsed ? 'User Accounts' : undefined}
+                title={collapsed && !mobileOpen ? 'User Accounts' : undefined}
               >
                 <span className="nav-icon">👥🔑</span>
-                {!collapsed && <span className="nav-label">User Accounts</span>}
+                {(!collapsed || mobileOpen) && <span className="nav-label">User Accounts</span>}
               </NavLink>
             )}
           </>
@@ -161,23 +182,23 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        {currentUser && !collapsed && (
+        {currentUser && (!collapsed || mobileOpen) && (
           <div style={{
-            padding: '8px 12px',
-            background: 'rgba(255, 255, 255, 0.05)',
-            borderRadius: '8px',
+            padding: '10px 12px',
+            background: '#f8fafc',
+            borderRadius: '10px',
             marginBottom: '10px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            border: '1px solid #e2e8f0',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 8,
           }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {currentUser.name}
               </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                 @{currentUser.username}
               </div>
             </div>
@@ -187,24 +208,49 @@ export default function Sidebar() {
           </div>
         )}
 
-        {currentUser && collapsed && (
+        {currentUser && collapsed && !mobileOpen && (
           <div style={{ textAlign: 'center', marginBottom: 10 }} title={currentUser.name}>
             <div style={{
-              width: 32, height: 32, borderRadius: 8,
+              width: 34, height: 34, borderRadius: 8,
               background: 'var(--accent-light)', color: 'var(--accent)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 800, fontSize: '0.85rem', margin: '0 auto'
+              fontWeight: 800, fontSize: '0.9rem', margin: '0 auto'
             }}>
               {currentUser.name?.charAt(0)?.toUpperCase() || '?'}
             </div>
           </div>
         )}
 
-        {/* Clear Bottom Minimize / Maximize Toggle Button */}
+        {/* Install Web App Button */}
         <button
-          className="sidebar-footer-toggle-btn"
+          type="button"
+          onClick={() => {
+            if (onCloseMobile) onCloseMobile();
+            promptAppInstall();
+          }}
+          className="sidebar-install-app-btn"
+          title="Install App on Phone / Desktop"
+        >
+          <span>📲</span>
+          {(!collapsed || mobileOpen) && <span>Install Mobile App</span>}
+        </button>
+
+        {/* View Public Website */}
+        {(!collapsed || mobileOpen) ? (
+          <NavLink to="/" onClick={handleItemClick} className="sidebar-website-btn">
+            <span>🌐</span> View Website
+          </NavLink>
+        ) : (
+          <NavLink to="/" onClick={handleItemClick} className="sidebar-website-btn" title="View Website">
+            🌐
+          </NavLink>
+        )}
+
+        {/* Clear Bottom Minimize / Maximize Toggle Button (Desktop only) */}
+        <button
+          className="sidebar-footer-toggle-btn desktop-only"
           onClick={() => setCollapsed(prev => !prev)}
-          title={collapsed ? "Maximize Sidebar (Show menu names)" : "Minimize Sidebar (Show icons only)"}
+          title={collapsed ? "Maximize Sidebar" : "Minimize Sidebar"}
           aria-label={collapsed ? "Maximize Sidebar" : "Minimize Sidebar"}
         >
           {collapsed ? (
@@ -223,53 +269,13 @@ export default function Sidebar() {
           )}
         </button>
 
-        {!collapsed ? (
-          <NavLink to="/" className="sidebar-website-btn" style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            width: '100%',
-            padding: '9px 14px',
-            borderRadius: '8px',
-            background: 'rgba(245, 158, 11, 0.12)',
-            color: '#f59e0b',
-            border: '1px solid rgba(245, 158, 11, 0.25)',
-            fontWeight: 600,
-            fontSize: '0.82rem',
-            marginBottom: '10px',
-            textAlign: 'center',
-            justifyContent: 'center',
-            textDecoration: 'none'
-          }}>
-            <span>🌐</span> View Website
-          </NavLink>
-        ) : (
-          <NavLink to="/" className="sidebar-website-btn" title="View Website" style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '100%',
-            padding: '9px 0',
-            borderRadius: '8px',
-            background: 'rgba(245, 158, 11, 0.12)',
-            color: '#f59e0b',
-            border: '1px solid rgba(245, 158, 11, 0.25)',
-            fontWeight: 600,
-            fontSize: '1rem',
-            marginBottom: '10px',
-            textDecoration: 'none'
-          }}>
-            🌐
-          </NavLink>
-        )}
-
-        <button className="logout-btn" onClick={handleLogout} title={collapsed ? 'Logout' : undefined}>
+        <button className="logout-btn" onClick={handleLogout} title={collapsed && !mobileOpen ? 'Logout' : undefined}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-          {!collapsed && 'Logout'}
+          {(!collapsed || mobileOpen) && 'Logout'}
         </button>
       </div>
     </aside>

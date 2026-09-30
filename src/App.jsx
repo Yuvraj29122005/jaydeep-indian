@@ -21,7 +21,14 @@ import Settings from './pages/Settings';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useApp();
-  return isLoggedIn ? children : <Navigate to="/login" replace />;
+  const isAuth = isLoggedIn || (() => {
+    try {
+      return localStorage.getItem('jig_logged_in') === 'true';
+    } catch (_e) {
+      return false;
+    }
+  })();
+  return isAuth ? children : <Navigate to="/login" replace />;
 }
 
 function ModuleGuard({ module, children }) {

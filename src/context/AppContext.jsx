@@ -10,13 +10,19 @@ export function AppProvider({ children }) {
     try {
       const saved = localStorage.getItem('jig_current_user');
       if (saved) return JSON.parse(saved);
-    } catch (_e) {}
-    const loggedIn = localStorage.getItem('jig_logged_in') === 'true';
-    return loggedIn ? db.SUPER_ADMIN_USER : null;
+      const loggedIn = localStorage.getItem('jig_logged_in') === 'true';
+      return loggedIn ? db.SUPER_ADMIN_USER : null;
+    } catch (_e) {
+      return null;
+    }
   });
 
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    return localStorage.getItem('jig_logged_in') === 'true';
+    try {
+      return localStorage.getItem('jig_logged_in') === 'true';
+    } catch (_e) {
+      return false;
+    }
   });
 
   // Data states
@@ -90,10 +96,12 @@ export function AppProvider({ children }) {
 
   // Persist login state
   useEffect(() => {
-    localStorage.setItem('jig_logged_in', isLoggedIn);
-    if (!isLoggedIn) {
-      localStorage.removeItem('jig_current_user');
-    }
+    try {
+      localStorage.setItem('jig_logged_in', String(isLoggedIn));
+      if (!isLoggedIn) {
+        localStorage.removeItem('jig_current_user');
+      }
+    } catch (_e) {}
   }, [isLoggedIn]);
 
   // Load all data from Supabase on mount (if logged in)
@@ -162,10 +170,12 @@ export function AppProvider({ children }) {
       try {
         const user = await db.authenticateUser(identifier, password);
         if (user) {
+          try {
+            localStorage.setItem('jig_logged_in', 'true');
+            localStorage.setItem('jig_current_user', JSON.stringify(user));
+          } catch (_e) {}
           setCurrentUser(user);
           setIsLoggedIn(true);
-          localStorage.setItem('jig_logged_in', 'true');
-          localStorage.setItem('jig_current_user', JSON.stringify(user));
           return { success: true, user };
         }
         return { success: false, error: 'Invalid username or password.' };
@@ -181,8 +191,10 @@ export function AppProvider({ children }) {
   const logout = () => {
     setIsLoggedIn(false);
     setCurrentUser(null);
-    localStorage.removeItem('jig_logged_in');
-    localStorage.removeItem('jig_current_user');
+    try {
+      localStorage.removeItem('jig_logged_in');
+      localStorage.removeItem('jig_current_user');
+    } catch (_e) {}
   };
 
   const hasModuleAccess = (module) => {

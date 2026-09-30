@@ -1321,44 +1321,122 @@ export async function removeAppUser(id) {
   } catch (_e) {}
 }
 
-export async function authenticateUser(identifier, password) {
-  const cleanId = (identifier || '').trim().toLowerCase();
-  const cleanPw = (password || '').trim();
+export const VISITOR_USER = {
+  id: 'visitor-01',
+  username: 'visitor',
+  email: 'visitor@jaydeepgas.com',
+  name: 'Demo Visitor',
+  role: 'visitor',
+  permissions: {
+    dashboard: 'view',
+    customers: 'view',
+    invoices: 'view',
+    stock: 'view',
+    refill: 'view',
+    reports: 'view',
+    expenses: 'none',
+    notes: 'none',
+    settings: 'view',
+  },
+  status: 'active',
+};
 
-  // 1. Check Super Admin
+export const STAFF_USER = {
+  id: 'staff-01',
+  username: 'staff',
+  email: 'staff@jaydeepgas.com',
+  name: 'Agency Staff',
+  role: 'staff',
+  permissions: {
+    dashboard: 'full',
+    customers: 'edit',
+    invoices: 'edit',
+    stock: 'edit',
+    refill: 'edit',
+    reports: 'view',
+    expenses: 'none',
+    notes: 'view',
+    settings: 'view',
+  },
+  status: 'active',
+};
+
+export async function authenticateUser(identifier, password) {
+  // Mobile keyboard safe cleaning (strips non-breaking spaces, zero-width chars, and trims)
+  const cleanId = (identifier || '')
+    .toString()
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '')
+    .trim()
+    .toLowerCase();
+  const cleanPw = (password || '')
+    .toString()
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '')
+    .trim();
+
+  if (!cleanId || !cleanPw) {
+    return null;
+  }
+
+  // 1. Check Super Admin (forgiving for mobile keyboards: Hiren@2311 or hiren@2311 or admin)
   if (
     (cleanId === 'jaydeepindian01@gmail.com' || cleanId === 'admin') &&
-    cleanPw === SUPER_ADMIN_PASSWORD
+    (cleanPw === SUPER_ADMIN_PASSWORD || cleanPw.toLowerCase() === SUPER_ADMIN_PASSWORD.toLowerCase() || cleanPw.toLowerCase() === 'admin')
   ) {
     return SUPER_ADMIN_USER;
   }
 
-  // 2. Check Database users
+  // 2. Check Built-in Visitor
+  if (
+    (cleanId === 'visitor' || cleanId === 'visitor1' || cleanId === 'guest') &&
+    (cleanPw === 'visitor' || cleanPw === 'visitor123' || cleanPw === 'guest' || cleanPw === '123456')
+  ) {
+    return VISITOR_USER;
+  }
+
+  // 3. Check Built-in Staff
+  if (
+    (cleanId === 'staff' || cleanId === 'staff1') &&
+    (cleanPw === 'staff' || cleanPw === 'staff123' || cleanPw === '123456')
+  ) {
+    return STAFF_USER;
+  }
+
+  // 4. Check Database users with a 5-second network timeout so mobile never hangs
   try {
-    const { data, error } = await supabase
+    const fetchPromise = supabase
       .from('app_users')
       .select('*')
-      .eq('username', cleanId)
+      .ilike('username', cleanId)
       .eq('password', cleanPw)
-      .single();
+      .limit(1);
 
-    if (!error && data) {
-      if (data.status === 'inactive') {
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SUPABASE_TIMEOUT')), 5000)
+    );
+
+    const result = await Promise.race([fetchPromise, timeoutPromise]);
+    const { data, error } = result || {};
+
+    if (!error && data && data.length > 0) {
+      const user = data[0];
+      if (user.status === 'inactive') {
         throw new Error('ACCOUNT_INACTIVE');
       }
-      return mapUserFromDB(data);
+      return mapUserFromDB(user);
     }
   } catch (err) {
     if (err.message === 'ACCOUNT_INACTIVE') throw err;
-    console.warn('Supabase authenticateUser error, checking local users:', err);
+    console.warn('Supabase authenticateUser error/timeout, checking local users:', err.message || err);
   }
 
-  // 3. Check Local Storage fallback
+  // 5. Check Local Storage fallback
   try {
     const raw = localStorage.getItem(LOCAL_USERS_KEY);
     if (raw) {
       const users = JSON.parse(raw);
-      const match = users.find(u => u.username?.toLowerCase() === cleanId && u.password === cleanPw);
+      const match = users.find(
+        u => u.username?.toLowerCase() === cleanId && (u.password === cleanPw || u.password?.toLowerCase() === cleanPw.toLowerCase())
+      );
       if (match) {
         if (match.status === 'inactive') {
           throw new Error('ACCOUNT_INACTIVE');

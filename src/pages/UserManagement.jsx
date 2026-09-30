@@ -70,7 +70,7 @@ export default function UserManagement() {
   const [roleFilter, setRoleFilter] = useState('All');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Combine Super Admin + generated users
+  // Combine Super Admin + Demo Visitor + generated users
   const superAdminEntry = {
     id: 'super-admin-01',
     username: 'admin',
@@ -81,7 +81,21 @@ export default function UserManagement() {
     permissions: { ...PRESETS.admin },
   };
 
-  const allDisplayUsers = [superAdminEntry, ...appUsers.filter(u => u.username !== 'admin')];
+  const visitorEntry = {
+    id: 'visitor-01',
+    username: 'visitor',
+    name: 'Demo Visitor (Permanent)',
+    role: 'visitor',
+    status: 'active',
+    isVisitorPermanent: true,
+    permissions: { ...PRESETS.visitor },
+  };
+
+  const allDisplayUsers = [
+    superAdminEntry,
+    visitorEntry,
+    ...appUsers.filter(u => u.username !== 'admin' && u.username !== 'visitor')
+  ];
 
   const filteredUsers = allDisplayUsers.filter(u => {
     const q = search.toLowerCase();
@@ -101,6 +115,7 @@ export default function UserManagement() {
 
   const openEdit = (u) => {
     if (u.isSuperAdmin) return alert('Super Admin settings are permanent.');
+    if (u.isVisitorPermanent) return alert('Demo Visitor account is permanent and configured for read-only preview.');
     setForm({
       username: u.username,
       password: '',
@@ -115,6 +130,7 @@ export default function UserManagement() {
 
   const openPasswordModal = (u) => {
     if (u.isSuperAdmin) return alert('Super Admin password is managed in configuration.');
+    if (u.isVisitorPermanent) return alert('Demo Visitor password is default: visitor123');
     setPasswordModalUser(u);
     setNewPassword('');
     setModal('password');
