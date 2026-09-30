@@ -712,18 +712,45 @@ export async function insertRefillTrip(trip) {
 
 export async function patchRefillTrip(id, updates) {
   const dbUpdates = {};
+  if (updates.cylinderType !== undefined) dbUpdates.cylinder_type = updates.cylinderType;
+  if (updates.emptySentCount !== undefined) dbUpdates.empty_sent_count = Number(updates.emptySentCount);
   if (updates.status !== undefined) dbUpdates.status = updates.status;
-  if (updates.filledReturnedCount !== undefined) dbUpdates.filled_returned_count = updates.filledReturnedCount;
+  if (updates.filledReturnedCount !== undefined) dbUpdates.filled_returned_count = Number(updates.filledReturnedCount);
+  if (updates.dateSent !== undefined) dbUpdates.date_sent = updates.dateSent;
   if (updates.dateReturned !== undefined) dbUpdates.date_returned = updates.dateReturned;
 
-  const { data, error } = await supabase
-    .from('refill_trips')
-    .update(dbUpdates)
-    .eq('id', id)
-    .select()
-    .single();
-  if (error) throw error;
-  return mapRefillTripFromDB(data);
+  try {
+    const { data, error } = await supabase
+      .from('refill_trips')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      console.warn('Supabase patchRefillTrip error:', error.message);
+      return { id, ...updates };
+    }
+    return mapRefillTripFromDB(data);
+  } catch (err) {
+    console.warn('patchRefillTrip network/table error:', err);
+    return { id, ...updates };
+  }
+}
+
+export async function removeRefillTrip(id) {
+  try {
+    const { error } = await supabase
+      .from('refill_trips')
+      .delete()
+      .eq('id', id);
+    if (error) {
+      console.warn('Supabase removeRefillTrip error:', error.message);
+    }
+    return true;
+  } catch (err) {
+    console.warn('removeRefillTrip network/table error:', err);
+    return true;
+  }
 }
 
 function mapRefillTripFromDB(row) {

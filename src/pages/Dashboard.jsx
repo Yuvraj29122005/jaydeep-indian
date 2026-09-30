@@ -33,23 +33,36 @@ export default function Dashboard() {
   const [pinShake, setPinShake] = useState(false);
 
   const dayInvoices = invoices.filter(i => i.date === selectedDate);
-  const dayRevenue = dayInvoices.reduce((s, i) => s + i.totalAmount, 0);
-  const dayOutstanding = dayInvoices.reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0);
+  const dayRevenue = dayInvoices.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
+  const dayOutstanding = dayInvoices.reduce((s, i) => s + Math.max(0, (Number(i.totalAmount) || 0) - (Number(i.paidAmount) || 0)), 0);
 
-  const dayFilledSold = dayInvoices.filter(i => i.invoiceType !== 'Empty Bottle').reduce((s, i) => s + i.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
+  const dayFilledSold = dayInvoices
+    .filter(i => i.invoiceType !== 'Empty Bottle')
+    .reduce((s, i) => s + (i.items || []).reduce((ss, it) => {
+      if (it.itemType === 'empty' || it.isBottleOnly) return ss;
+      return ss + (Number(it.qty) || 0);
+    }, 0), 0);
+
   const dayEmptyCollected = dayInvoices.reduce((s, i) => {
-    if (i.invoiceType === 'Empty Bottle') return s + i.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0);
-    return s + i.items.reduce((ss, it) => ss + (it.emptyCount !== undefined ? Number(it.emptyCount) : (it.emptyCollected ? Number(it.qty) : 0)), 0);
+    if (i.invoiceType === 'Empty Bottle') {
+      return s + (i.items || []).reduce((ss, it) => ss + (Number(it.qty) || 0), 0);
+    }
+    return s + (i.items || []).reduce((ss, it) => {
+      if (it.isNC) return ss;
+      return ss + (it.emptyCount !== undefined ? Number(it.emptyCount) : (it.emptyCollected ? Number(it.qty) : 0));
+    }, 0);
   }, 0);
+
   const dayEmptyNotCollected = dayInvoices.filter(i => i.invoiceType !== 'Empty Bottle').reduce((s, i) => {
-    return s + i.items.reduce((ss, it) => {
+    return s + (i.items || []).reduce((ss, it) => {
+      if (it.isNC || it.itemType === 'empty' || it.isBottleOnly) return ss;
       const coll = it.emptyCount !== undefined ? Number(it.emptyCount) : (it.emptyCollected ? Number(it.qty) : 0);
       return ss + Math.max(0, (Number(it.qty) || 0) - coll);
     }, 0);
   }, 0);
 
-  const totalRevenue = invoices.reduce((s, i) => s + i.totalAmount, 0);
-  const totalOutstanding = invoices.reduce((s, i) => s + (i.totalAmount - i.paidAmount), 0);
+  const totalRevenue = invoices.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
+  const totalOutstanding = invoices.reduce((s, i) => s + Math.max(0, (Number(i.totalAmount) || 0) - (Number(i.paidAmount) || 0)), 0);
 
   const totalFilled = stock.reduce((s, st) => s + st.filledCount, 0);
   const totalEmpty = stock.reduce((s, st) => s + st.emptyCount, 0);

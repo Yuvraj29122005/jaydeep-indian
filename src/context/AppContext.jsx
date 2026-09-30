@@ -366,21 +366,43 @@ export function AppProvider({ children }) {
   // ==================== STOCK ====================
 
   const updateStock = async (cylinderType, filledDelta, emptyDelta) => {
-    const s = stock.find(st => st.cylinderType === cylinderType);
-    if (!s) return;
-
-    const newFilled = Math.max(0, s.filledCount + filledDelta);
-    const newEmpty = Math.max(0, s.emptyCount + emptyDelta);
+    let newFilled = 0;
+    let newEmpty = 0;
+    setStock(prev => prev.map(st => {
+      if (st.cylinderType === cylinderType) {
+        newFilled = Math.max(0, (st.filledCount || 0) + Number(filledDelta || 0));
+        newEmpty = Math.max(0, (st.emptyCount || 0) + Number(emptyDelta || 0));
+        return { ...st, filledCount: newFilled, emptyCount: newEmpty };
+      }
+      return st;
+    }));
 
     try {
       await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
-      setStock(prev => prev.map(st =>
-        st.cylinderType === cylinderType
-          ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
-          : st
-      ));
     } catch (err) {
       console.error('Failed to update stock:', err);
+    }
+  };
+
+  const updateStockBatch = async (varietyDeltas) => {
+    const updatedStock = {};
+    setStock(prev => prev.map(st => {
+      const d = varietyDeltas[st.cylinderType];
+      if (d) {
+        const newFilled = Math.max(0, (st.filledCount || 0) + Number(d.filledDelta || 0));
+        const newEmpty = Math.max(0, (st.emptyCount || 0) + Number(d.emptyDelta || 0));
+        updatedStock[st.cylinderType] = { filledCount: newFilled, emptyCount: newEmpty };
+        return { ...st, filledCount: newFilled, emptyCount: newEmpty };
+      }
+      return st;
+    }));
+
+    for (const [cylType, counts] of Object.entries(updatedStock)) {
+      try {
+        await db.patchStock(cylType, counts);
+      } catch (err) {
+        console.error(`Failed to patch stock for ${cylType}:`, err);
+      }
     }
   };
 
@@ -423,39 +445,43 @@ export function AppProvider({ children }) {
 
         setInvoices(prev => [...prev, newInvoice]);
 
-        // Calculate deltas for customer and update agency warehouse stock
-        if (invoiceData.items && invoiceData.customerId && invoiceData.customerId !== 'manual') {
+        // 1. Calculate and update warehouse agency stock INSTANTLY variety-wise for ALL invoices
+        if (invoiceData.items && invoiceData.items.length > 0) {
+          const varietyStockDeltas = {};
+          CYLINDER_TYPES.forEach(t => {
+            varietyStockDeltas[t] = { filledDelta: 0, emptyDelta: 0 };
+          });
+
           const customerDeltas = {};
-          const ncBottleDeltas = {}; // Track NC bottle additions
+          const ncBottleDeltas = {};
 
           for (const item of invoiceData.items) {
             const type = item.cylinderType;
+            if (!varietyStockDeltas[type]) {
+              varietyStockDeltas[type] = { filledDelta: 0, emptyDelta: 0 };
+            }
             const isItemEmpty = isEB || item.itemType === 'empty' || item.isBottleOnly;
             const isNC = Boolean(item.isNC);
 
             if (isNC) {
-              // NC bottles: deduct from filled stock but do NOT add to empty pending
               const filledQty = Number(item.qty) || 0;
-              await updateStock(type, -filledQty, 0);
+              varietyStockDeltas[type].filledDelta -= filledQty;
 
-              // Track NC bottles for the customer
               if (!ncBottleDeltas[type]) ncBottleDeltas[type] = 0;
               ncBottleDeltas[type] += filledQty;
 
-              // Still count as filled given but NOT as withCustomer (no empty expected)
               if (!customerDeltas[type]) {
                 customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
               }
               customerDeltas[type].filledDelta += filledQty;
-              // withCustomerDelta stays 0 for NC - no empty return expected
             } else {
               const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
               const emptyGain = isItemEmpty 
                 ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
                 : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
 
-              // Update warehouse agency stock
-              await updateStock(type, -filledQty, emptyGain);
+              varietyStockDeltas[type].filledDelta -= filledQty;
+              varietyStockDeltas[type].emptyDelta += emptyGain;
 
               if (!customerDeltas[type]) {
                 customerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
@@ -466,21 +492,25 @@ export function AppProvider({ children }) {
             }
           }
 
-          // Atomically sync customer status (both empty and filled)
-          await applyInvoiceBottleChangesToCustomer(invoiceData.customerId, customerDeltas);
+          // Instantly update warehouse stock variety-wise!
+          await updateStockBatch(varietyStockDeltas);
 
-          // Update NC bottles on customer record
-          if (Object.keys(ncBottleDeltas).length > 0) {
-            const customer = customers.find(c => c.id === invoiceData.customerId);
-            if (customer) {
-              const currentNC = { ...(customer.ncBottles || {}) };
-              CYLINDER_TYPES.forEach(t => {
-                if (ncBottleDeltas[t]) {
-                  currentNC[t] = (currentNC[t] || 0) + ncBottleDeltas[t];
-                }
-              });
-              await db.patchCustomer(invoiceData.customerId, { ncBottles: currentNC });
-              setCustomers(prev => prev.map(c => c.id === invoiceData.customerId ? { ...c, ncBottles: currentNC } : c));
+          // Update customer record if saved customer selected
+          if (invoiceData.customerId && invoiceData.customerId !== 'manual') {
+            await applyInvoiceBottleChangesToCustomer(invoiceData.customerId, customerDeltas);
+
+            if (Object.keys(ncBottleDeltas).length > 0) {
+              const customer = customers.find(c => c.id === invoiceData.customerId);
+              if (customer) {
+                const currentNC = { ...(customer.ncBottles || {}) };
+                CYLINDER_TYPES.forEach(t => {
+                  if (ncBottleDeltas[t]) {
+                    currentNC[t] = (currentNC[t] || 0) + ncBottleDeltas[t];
+                  }
+                });
+                await db.patchCustomer(invoiceData.customerId, { ncBottles: currentNC });
+                setCustomers(prev => prev.map(c => c.id === invoiceData.customerId ? { ...c, ncBottles: currentNC } : c));
+              }
             }
           }
         }
@@ -513,54 +543,132 @@ export function AppProvider({ children }) {
         const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
         const newIsEB = updates.invoiceType === 'Empty Bottle' || (updates.invoiceType === undefined && oldIsEB);
 
-        // Revert old items from warehouse stock and old customer
-        if (oldInv.items && oldInv.customerId) {
-          const revertDeltas = {};
+        const varietyStockDeltas = {};
+        CYLINDER_TYPES.forEach(t => {
+          varietyStockDeltas[t] = { filledDelta: 0, emptyDelta: 0 };
+        });
+
+        // 1. Revert old items from warehouse stock and old customer
+        if (oldInv.items && oldInv.items.length > 0) {
+          const revertCustomerDeltas = {};
+          const revertNCDeltas = {};
+
           for (const item of oldInv.items) {
             const type = item.cylinderType;
+            if (!varietyStockDeltas[type]) varietyStockDeltas[type] = { filledDelta: 0, emptyDelta: 0 };
             const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
-            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-            const emptyGain = isItemEmpty 
-              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+            const isNC = Boolean(item.isNC);
 
-            await updateStock(type, filledQty, -emptyGain);
+            if (isNC) {
+              const filledQty = Number(item.qty) || 0;
+              varietyStockDeltas[type].filledDelta += filledQty;
 
-            if (!revertDeltas[type]) {
-              revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              if (!revertNCDeltas[type]) revertNCDeltas[type] = 0;
+              revertNCDeltas[type] += filledQty;
+
+              if (!revertCustomerDeltas[type]) {
+                revertCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              revertCustomerDeltas[type].filledDelta -= filledQty;
+            } else {
+              const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+              const emptyGain = isItemEmpty 
+                ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+                : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+              varietyStockDeltas[type].filledDelta += filledQty;
+              varietyStockDeltas[type].emptyDelta -= emptyGain;
+
+              if (!revertCustomerDeltas[type]) {
+                revertCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              revertCustomerDeltas[type].filledDelta -= filledQty;
+              revertCustomerDeltas[type].withCustomerDelta -= filledQty;
+              revertCustomerDeltas[type].emptyCollectedDelta -= emptyGain;
             }
-            revertDeltas[type].filledDelta -= filledQty;
-            revertDeltas[type].withCustomerDelta -= filledQty;
-            revertDeltas[type].emptyCollectedDelta -= emptyGain;
           }
-          await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
+
+          if (oldInv.customerId && oldInv.customerId !== 'manual') {
+            await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertCustomerDeltas);
+            if (Object.keys(revertNCDeltas).length > 0) {
+              const customer = customers.find(c => c.id === oldInv.customerId);
+              if (customer) {
+                const currentNC = { ...(customer.ncBottles || {}) };
+                CYLINDER_TYPES.forEach(t => {
+                  if (revertNCDeltas[t]) {
+                    currentNC[t] = Math.max(0, (currentNC[t] || 0) - revertNCDeltas[t]);
+                  }
+                });
+                await db.patchCustomer(oldInv.customerId, { ncBottles: currentNC });
+                setCustomers(prev => prev.map(c => c.id === oldInv.customerId ? { ...c, ncBottles: currentNC } : c));
+              }
+            }
+          }
         }
 
-        // Apply new items to warehouse stock and new/updated customer
+        // 2. Apply new items to warehouse stock and new/updated customer
         const targetCustomerId = updates.customerId || oldInv.customerId;
         const targetItems = updates.items || oldInv.items;
 
-        if (targetItems && targetCustomerId) {
-          const applyDeltas = {};
+        if (targetItems && targetItems.length > 0) {
+          const applyCustomerDeltas = {};
+          const applyNCDeltas = {};
+
           for (const item of targetItems) {
             const type = item.cylinderType;
+            if (!varietyStockDeltas[type]) varietyStockDeltas[type] = { filledDelta: 0, emptyDelta: 0 };
             const isItemEmpty = newIsEB || item.itemType === 'empty' || item.isBottleOnly;
-            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-            const emptyGain = isItemEmpty 
-              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+            const isNC = Boolean(item.isNC);
 
-            await updateStock(type, -filledQty, emptyGain);
+            if (isNC) {
+              const filledQty = Number(item.qty) || 0;
+              varietyStockDeltas[type].filledDelta -= filledQty;
 
-            if (!applyDeltas[type]) {
-              applyDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              if (!applyNCDeltas[type]) applyNCDeltas[type] = 0;
+              applyNCDeltas[type] += filledQty;
+
+              if (!applyCustomerDeltas[type]) {
+                applyCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              applyCustomerDeltas[type].filledDelta += filledQty;
+            } else {
+              const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+              const emptyGain = isItemEmpty 
+                ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+                : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+              varietyStockDeltas[type].filledDelta -= filledQty;
+              varietyStockDeltas[type].emptyDelta += emptyGain;
+
+              if (!applyCustomerDeltas[type]) {
+                applyCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              applyCustomerDeltas[type].filledDelta += filledQty;
+              applyCustomerDeltas[type].withCustomerDelta += filledQty;
+              applyCustomerDeltas[type].emptyCollectedDelta += emptyGain;
             }
-            applyDeltas[type].filledDelta += filledQty;
-            applyDeltas[type].withCustomerDelta += filledQty;
-            applyDeltas[type].emptyCollectedDelta += emptyGain;
           }
-          await applyInvoiceBottleChangesToCustomer(targetCustomerId, applyDeltas);
+
+          if (targetCustomerId && targetCustomerId !== 'manual') {
+            await applyInvoiceBottleChangesToCustomer(targetCustomerId, applyCustomerDeltas);
+            if (Object.keys(applyNCDeltas).length > 0) {
+              const customer = customers.find(c => c.id === targetCustomerId);
+              if (customer) {
+                const currentNC = { ...(customer.ncBottles || {}) };
+                CYLINDER_TYPES.forEach(t => {
+                  if (applyNCDeltas[t]) {
+                    currentNC[t] = (currentNC[t] || 0) + applyNCDeltas[t];
+                  }
+                });
+                await db.patchCustomer(targetCustomerId, { ncBottles: currentNC });
+                setCustomers(prev => prev.map(c => c.id === targetCustomerId ? { ...c, ncBottles: currentNC } : c));
+              }
+            }
+          }
         }
+
+        // Apply net stock deltas variety-wise
+        await updateStockBatch(varietyStockDeltas);
 
         const updatedInv = await db.patchInvoice(id, updates);
         setInvoices(prev => prev.map(inv => inv.id === id ? updatedInv : inv));
@@ -579,26 +687,69 @@ export function AppProvider({ children }) {
 
       try {
         const oldIsEB = oldInv.invoiceType === 'Empty Bottle';
-        if (oldInv.items && oldInv.customerId) {
-          const revertDeltas = {};
+        if (oldInv.items && oldInv.items.length > 0) {
+          const varietyStockDeltas = {};
+          CYLINDER_TYPES.forEach(t => {
+            varietyStockDeltas[t] = { filledDelta: 0, emptyDelta: 0 };
+          });
+          const revertCustomerDeltas = {};
+          const revertNCDeltas = {};
+
           for (const item of oldInv.items) {
             const type = item.cylinderType;
+            if (!varietyStockDeltas[type]) varietyStockDeltas[type] = { filledDelta: 0, emptyDelta: 0 };
             const isItemEmpty = oldIsEB || item.itemType === 'empty' || item.isBottleOnly;
-            const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
-            const emptyGain = isItemEmpty 
-              ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
-              : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+            const isNC = Boolean(item.isNC);
 
-            await updateStock(type, filledQty, -emptyGain);
+            if (isNC) {
+              const filledQty = Number(item.qty) || 0;
+              varietyStockDeltas[type].filledDelta += filledQty;
 
-            if (!revertDeltas[type]) {
-              revertDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              if (!revertNCDeltas[type]) revertNCDeltas[type] = 0;
+              revertNCDeltas[type] += filledQty;
+
+              if (!revertCustomerDeltas[type]) {
+                revertCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              revertCustomerDeltas[type].filledDelta -= filledQty;
+            } else {
+              const filledQty = isItemEmpty ? 0 : (Number(item.qty) || 0);
+              const emptyGain = isItemEmpty 
+                ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0)
+                : (item.emptyCollected ? (Number(item.emptyCount !== undefined ? item.emptyCount : item.qty) || 0) : 0);
+
+              varietyStockDeltas[type].filledDelta += filledQty;
+              varietyStockDeltas[type].emptyDelta -= emptyGain;
+
+              if (!revertCustomerDeltas[type]) {
+                revertCustomerDeltas[type] = { filledDelta: 0, emptyCollectedDelta: 0, withCustomerDelta: 0 };
+              }
+              revertCustomerDeltas[type].filledDelta -= filledQty;
+              revertCustomerDeltas[type].withCustomerDelta -= filledQty;
+              revertCustomerDeltas[type].emptyCollectedDelta -= emptyGain;
             }
-            revertDeltas[type].filledDelta -= filledQty;
-            revertDeltas[type].withCustomerDelta -= filledQty;
-            revertDeltas[type].emptyCollectedDelta -= emptyGain;
           }
-          await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertDeltas);
+
+          // Restore stock
+          await updateStockBatch(varietyStockDeltas);
+
+          // Restore customer balance
+          if (oldInv.customerId && oldInv.customerId !== 'manual') {
+            await applyInvoiceBottleChangesToCustomer(oldInv.customerId, revertCustomerDeltas);
+            if (Object.keys(revertNCDeltas).length > 0) {
+              const customer = customers.find(c => c.id === oldInv.customerId);
+              if (customer) {
+                const currentNC = { ...(customer.ncBottles || {}) };
+                CYLINDER_TYPES.forEach(t => {
+                  if (revertNCDeltas[t]) {
+                    currentNC[t] = Math.max(0, (currentNC[t] || 0) - revertNCDeltas[t]);
+                  }
+                });
+                await db.patchCustomer(oldInv.customerId, { ncBottles: currentNC });
+                setCustomers(prev => prev.map(c => c.id === oldInv.customerId ? { ...c, ncBottles: currentNC } : c));
+              }
+            }
+          }
         }
 
         await db.removeInvoice(id);
@@ -652,14 +803,16 @@ export function AppProvider({ children }) {
   const sendForRefill = async (cylinderType, emptyCount) => {
     return withLoading(async () => {
       try {
-        await updateStock(cylinderType, 0, -emptyCount);
+        await updateStock(cylinderType, 0, -Number(emptyCount));
         const newTrip = await db.insertRefillTrip({
           cylinderType,
-          emptySentCount: emptyCount,
+          emptySentCount: Number(emptyCount),
         });
         setRefillTrips(prev => [newTrip, ...prev]);
+        return newTrip;
       } catch (err) {
         console.error('Failed to send for refill:', err);
+        throw err;
       }
     }, 'Dispatching Refill Trip...', 'Deducting empty cylinders from stock');
   };
@@ -670,17 +823,76 @@ export function AppProvider({ children }) {
       if (!trip) return;
 
       try {
-        await updateStock(trip.cylinderType, filledCount, 0);
+        await updateStock(trip.cylinderType, Number(filledCount), 0);
         const updatedTrip = await db.patchRefillTrip(tripId, {
           status: 'Returned',
-          filledReturnedCount: filledCount,
+          filledReturnedCount: Number(filledCount),
           dateReturned: new Date().toISOString(),
         });
-        setRefillTrips(prev => prev.map(t => t.id === tripId ? updatedTrip : t));
+        setRefillTrips(prev => prev.map(t => t.id === tripId ? { ...t, ...updatedTrip } : t));
+        return updatedTrip;
       } catch (err) {
         console.error('Failed to return from refill:', err);
+        throw err;
       }
     }, 'Receiving Refill Return...', 'Adding filled cylinders to stock');
+  };
+
+  const editRefillTrip = async (tripId, updates) => {
+    return withLoading(async () => {
+      const oldTrip = refillTrips.find(t => t.id === tripId);
+      if (!oldTrip) return;
+
+      try {
+        // 1. Revert old trip impact on warehouse stock
+        // When sent: emptyCount was reduced by oldTrip.emptySentCount -> so add it back!
+        // When returned: filledCount was increased by oldTrip.filledReturnedCount -> so subtract it!
+        const oldEmptyRevert = Number(oldTrip.emptySentCount) || 0;
+        const oldFilledRevert = oldTrip.status === 'Returned' ? -(Number(oldTrip.filledReturnedCount) || 0) : 0;
+        await updateStock(oldTrip.cylinderType, oldFilledRevert, oldEmptyRevert);
+
+        // 2. Compute new trip values
+        const newCylinderType = updates.cylinderType || oldTrip.cylinderType;
+        const newEmptySent = updates.emptySentCount !== undefined ? Number(updates.emptySentCount) : Number(oldTrip.emptySentCount);
+        const newStatus = updates.status || oldTrip.status;
+        const newFilledReturned = updates.filledReturnedCount !== undefined ? Number(updates.filledReturnedCount) : (Number(oldTrip.filledReturnedCount) || 0);
+
+        // 3. Apply new trip impact on warehouse stock
+        const newEmptyDeduct = -newEmptySent;
+        const newFilledAdd = newStatus === 'Returned' ? newFilledReturned : 0;
+        await updateStock(newCylinderType, newFilledAdd, newEmptyDeduct);
+
+        // 4. Update in database & state
+        const updatedTrip = await db.patchRefillTrip(tripId, updates);
+        setRefillTrips(prev => prev.map(t => t.id === tripId ? { ...t, ...updatedTrip } : t));
+        return updatedTrip;
+      } catch (err) {
+        console.error('Failed to edit refill trip:', err);
+        throw err;
+      }
+    }, 'Updating Refill Trip...', 'Adjusting cylinder stock & records');
+  };
+
+  const deleteRefillTrip = async (tripId) => {
+    return withLoading(async () => {
+      const trip = refillTrips.find(t => t.id === tripId);
+      if (!trip) return;
+
+      try {
+        // Revert stock impact cleanly:
+        // Empty cylinders sent were removed from stock -> restore them!
+        // Filled cylinders received were added to stock -> deduct them!
+        const emptyRevert = Number(trip.emptySentCount) || 0;
+        const filledRevert = trip.status === 'Returned' ? -(Number(trip.filledReturnedCount) || 0) : 0;
+        await updateStock(trip.cylinderType, filledRevert, emptyRevert);
+
+        await db.removeRefillTrip(tripId);
+        setRefillTrips(prev => prev.filter(t => t.id !== tripId));
+      } catch (err) {
+        console.error('Failed to delete refill trip:', err);
+        throw err;
+      }
+    }, 'Deleting Refill Trip...', 'Restoring cylinder stock balances');
   };
 
   // ==================== PERSONAL NOTES ====================
@@ -842,11 +1054,11 @@ export function AppProvider({ children }) {
       customers, addCustomer, updateCustomer, deleteCustomer,
       marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
       agencySettings, agencySettingsMeta, updateAgencySettings, resetAgencySettings,
-      stock, updateStock, addStockManual, getStockByType,
+      stock, updateStock, updateStockBatch, addStockManual, getStockByType,
       invoices, createInvoice, updateInvoice, editInvoiceFull, deleteInvoice,
       updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,
       expenses, addExpense, updateExpense, deleteExpense,
-      refillTrips, sendForRefill, returnFromRefill,
+      refillTrips, sendForRefill, returnFromRefill, editRefillTrip, deleteRefillTrip,
       notes, addNote, updateNote, deleteNote,
       resetAllDataWithPin,
     }}>

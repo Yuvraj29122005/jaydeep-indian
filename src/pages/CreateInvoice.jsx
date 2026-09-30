@@ -82,18 +82,12 @@ export default function CreateInvoice() {
       const qType = searchParams.get('type');
       const qCust = searchParams.get('customer');
 
-      const invPrefix = agencySettings?.invoicePrefix || 'JIG';
-      const ebPrefix = agencySettings?.emptyBottlePrefix || 'EB';
-
       const isEB = qType === 'empty';
       if (isEB) {
         setInvoiceType('Empty Bottle');
-        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith(`${ebPrefix}-`) || i.invoiceNumber?.startsWith('EB-')).length + 1;
-        setInvoiceNumber(`${ebPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
-      } else {
-        const count = invoices.length + 1;
-        setInvoiceNumber(`${invPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
       }
+      // Invoice number always blank — user must input manually
+      setInvoiceNumber('');
 
       if (qCust) {
         setSelectedCustomerId(qCust);
@@ -176,12 +170,10 @@ export default function CreateInvoice() {
     setInvoiceType(type);
 
     if (!isEditing) {
-      const invPrefix = agencySettings?.invoicePrefix || 'JIG';
-      const ebPrefix = agencySettings?.emptyBottlePrefix || 'EB';
+      // Invoice number always blank — user must input manually
+      setInvoiceNumber('');
 
       if (type === 'Empty Bottle') {
-        const count = invoices.filter(i => i.invoiceType === 'Empty Bottle' || i.invoiceNumber?.startsWith(`${ebPrefix}-`) || i.invoiceNumber?.startsWith('EB-')).length + 1;
-        setInvoiceNumber(`${ebPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
         // If selected customer has pending empty bottles, suggest auto-filling
         if (selectedCustomer) {
           autoFillPendingBottles(selectedCustomer);
@@ -189,8 +181,6 @@ export default function CreateInvoice() {
           setItems([blankItem(true)]);
         }
       } else {
-        const count = invoices.length + 1;
-        setInvoiceNumber(`${invPrefix}-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`);
         setItems([blankItem(false)]);
       }
     }
@@ -298,10 +288,36 @@ export default function CreateInvoice() {
 
   const validate = () => {
     const errs = {};
-    if (!invoiceNumber.trim()) errs.invoiceNumber = 'Invoice Number is required';
+    if (!invoiceNumber.trim()) {
+      errs.invoiceNumber = 'Invoice Number is required (enter invoice number manually)';
+    } else {
+      const trimmed = invoiceNumber.trim().toLowerCase();
+      const duplicate = invoices.find(i => (!isEditing || i.id !== id) && (i.invoiceNumber || '').trim().toLowerCase() === trimmed);
+      if (duplicate) {
+        errs.invoiceNumber = `Invoice Number "${invoiceNumber.trim()}" is already used! Please enter a unique invoice number.`;
+      }
+    }
+
     if (!selectedCustomerId && customerInputMode === 'select') errs.customer = 'Please select a customer';
     if (!manualCustomerName.trim() && customerInputMode === 'manual') errs.customer = 'Please enter customer name';
     if (items.length === 0) errs.items = 'Add at least one item';
+
+    // Variety-wise total stock check
+    if (invoiceType === 'Standard' && !isEditing) {
+      const requestedByType = {};
+      items.forEach(item => {
+        if (item.itemType !== 'empty' && !item.isBottleOnly) {
+          requestedByType[item.cylinderType] = (requestedByType[item.cylinderType] || 0) + (Number(item.qty) || 0);
+        }
+      });
+      CYLINDER_TYPES.forEach(t => {
+        const available = getStockByType(t).filledCount;
+        const req = requestedByType[t] || 0;
+        if (req > available) {
+          errs.items = `Total requested ${t} filled cylinders (${req}) exceeds available warehouse stock (${available})!`;
+        }
+      });
+    }
 
     items.forEach((item, idx) => {
       const qty = Number(item.qty) || 0;
@@ -501,15 +517,19 @@ export default function CreateInvoice() {
             <div className="card-body">
               <div className="form-grid">
                 <div className="form-group full">
-                  <label className="form-label">Invoice Number *</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label className="form-label" style={{ margin: 0 }}>Invoice Number *</label>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Required · Enter manually</span>
+                  </div>
                   <input
                     className="form-control"
                     type="text"
-                    placeholder="Enter Invoice Number"
+                    placeholder="Enter Invoice Number (e.g. 101, INV-001)..."
                     value={invoiceNumber}
                     onChange={e => setInvoiceNumber(e.target.value)}
+                    style={{ fontWeight: 700, fontSize: '0.95rem' }}
                   />
-                  {errors.invoiceNumber && <span className="text-danger" style={{ fontSize: '0.78rem' }}>{errors.invoiceNumber}</span>}
+                  {errors.invoiceNumber && <span className="text-danger" style={{ fontSize: '0.78rem', marginTop: 4, display: 'block' }}>{errors.invoiceNumber}</span>}
                 </div>
 
                 {/* Customer Input Mode Toggle */}
