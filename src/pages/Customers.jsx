@@ -828,7 +828,7 @@ export default function Customers() {
                         </div>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                      <div className="pricing-modal-grid">
                         <div>
                           <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
                           <input
@@ -938,7 +938,7 @@ export default function Customers() {
                         <span style={{ fontWeight: 700, fontSize: '0.86rem' }}>{CYL_ICONS[type]} {type} Cylinder</span>
                         <span className="badge badge-info" style={{ fontSize: '0.72rem' }}>Market Rate: ₹{mkt}</span>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                      <div className="pricing-modal-grid">
                         <div>
                           <label className="form-label" style={{ fontSize: '0.72rem' }}>Price (₹)</label>
                           <input
@@ -1059,7 +1059,7 @@ export default function Customers() {
                     </span>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                <div className="cyl-modal-stock-grid">
                   {CYLINDER_TYPES.map(type => {
                     const s = stock[type] || { withCustomer: 0, collected: 0 };
                     const net = Math.max(0, s.withCustomer - s.collected);
@@ -1090,7 +1090,7 @@ export default function Customers() {
                   </p>
                 </div>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
+                <div className="cyl-modal-add-grid">
                   {CYLINDER_TYPES.map(type => {
                     return (
                       <div key={type} style={{ padding: 12, background: 'var(--bg-body)', borderRadius: 8, border: '1px solid var(--border)' }}>

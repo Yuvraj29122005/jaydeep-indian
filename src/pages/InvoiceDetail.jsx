@@ -336,7 +336,7 @@ export default function InvoiceDetail() {
 
       {/* Bill Footer & Terms */}
       <div className="card mb-20 invoice-terms-card">
-        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 24, alignItems: 'start' }}>
+        <div className="card-body invoice-terms-grid">
           <div>
             {currentSettings.invoiceTerms && (
               <div style={{ marginBottom: 12 }}>

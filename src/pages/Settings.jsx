@@ -883,7 +883,7 @@ WHERE NOT EXISTS (SELECT 1 FROM public.agency_settings);`;
             </table>
 
             {/* Totals & Bank block */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20, marginBottom: 20 }}>
+            <div className="preview-totals-grid" style={{ marginBottom: 20 }}>
               {/* Bank details card */}
               <div style={{
                 background: '#f8fafc',
@@ -929,10 +929,7 @@ WHERE NOT EXISTS (SELECT 1 FROM public.agency_settings);`;
             </div>
 
             {/* Terms & Signature */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1.4fr 1fr',
-              gap: 20,
+            <div className="preview-terms-grid" style={{
               borderTop: '1px dashed #cbd5e1',
               paddingTop: 16,
               alignItems: 'end'

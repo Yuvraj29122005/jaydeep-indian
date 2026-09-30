@@ -546,7 +546,7 @@ export default function UserManagement() {
                 </p>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
                 {MODULES.map(m => {
                   const currentLevel = form.permissions?.[m.key] || 'none';
                   return (

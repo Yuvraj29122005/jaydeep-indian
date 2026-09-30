@@ -215,7 +215,8 @@ export default function CustomerDetail() {
           </button>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24, marginBottom: 24 }}>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24, marginBottom: 24 }}>
         {/* Filled Bottles Sold Card */}
         <div className="card" style={{
           border: '2px solid var(--success)',
@@ -649,7 +650,7 @@ export default function CustomerDetail() {
                         </div>
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                      <div className="pricing-modal-grid">
                         <div>
                           <label className="form-label" style={{ fontSize: '0.74rem' }}>💰 Customer Price (₹)</label>
                           <input

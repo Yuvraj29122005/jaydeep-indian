@@ -18,12 +18,13 @@ export default function Login() {
     }
   }, [isLoggedIn, navigate]);
 
-  const executeLogin = async (idToUse, pwToUse) => {
+  const handleSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const cleanId = (idToUse || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
-      const cleanPw = (pwToUse || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
+      const cleanId = (identifier || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
+      const cleanPw = (password || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
       const res = await login(cleanId, cleanPw);
       if (res && res.success) {
         navigate('/dashboard', { replace: true });
@@ -34,28 +35,6 @@ export default function Login() {
       setError('Login connection error: ' + (err.message || err));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    if (e && e.preventDefault) e.preventDefault();
-    await executeLogin(identifier, password);
-  };
-
-  // Quick 1-tap mobile demo logins for Admin & Visitor
-  const handleQuickLogin = (role) => {
-    if (role === 'admin') {
-      setIdentifier('admin');
-      setPassword('Hiren@2311');
-      executeLogin('admin', 'Hiren@2311');
-    } else if (role === 'visitor') {
-      setIdentifier('visitor');
-      setPassword('visitor123');
-      executeLogin('visitor', 'visitor123');
-    } else if (role === 'staff') {
-      setIdentifier('staff');
-      setPassword('staff123');
-      executeLogin('staff', 'staff123');
     }
   };
 
@@ -76,45 +55,7 @@ export default function Login() {
 
         <div className="portal-indicator">
           <span className="dot-live" />
-          <span>Authorized Admin & Visitor Access</span>
-        </div>
-
-        {/* Quick One-Tap Mobile Login Buttons */}
-        <div className="quick-login-section">
-          <div className="quick-login-label">⚡ QUICK ONE-TAP LOGIN</div>
-          <div className="quick-login-buttons">
-            <button
-              type="button"
-              className="btn-quick-role btn-quick-admin"
-              onClick={() => handleQuickLogin('admin')}
-              disabled={loading}
-              title="Instant Admin Login"
-            >
-              <span className="quick-role-icon">👑</span>
-              <div className="quick-role-text">
-                <strong>Admin Panel</strong>
-                <small>Full Access</small>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className="btn-quick-role btn-quick-visitor"
-              onClick={() => handleQuickLogin('visitor')}
-              disabled={loading}
-              title="Instant Visitor Login"
-            >
-              <span className="quick-role-icon">👁️</span>
-              <div className="quick-role-text">
-                <strong>Visitor Panel</strong>
-                <small>Demo / View</small>
-              </div>
-            </button>
-          </div>
-        </div>
-
-        <div className="login-divider">
-          <span>or sign in manually</span>
+          <span>Authorized Personnel Access Only</span>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit} noValidate>
@@ -124,7 +65,7 @@ export default function Login() {
               id="identifier"
               className="login-input"
               type="text"
-              placeholder="e.g. admin or visitor"
+              placeholder="Enter your username or email"
               value={identifier}
               onChange={e => setIdentifier(e.target.value)}
               autoCapitalize="none"
@@ -151,7 +92,7 @@ export default function Login() {
               id="password"
               className="login-input"
               type={showPassword ? 'text' : 'password'}
-              placeholder="Enter password"
+              placeholder="Enter your password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               autoCapitalize="none"
@@ -171,10 +112,10 @@ export default function Login() {
         </form>
 
         <div className="login-help-footer">
-          <div>💡 <strong>Admin:</strong> <code>admin</code> / <code>Hiren@2311</code></div>
-          <div>👁️ <strong>Visitor:</strong> <code>visitor</code> / <code>visitor123</code></div>
+          <div>🔒 Contact your administrator if you need access credentials.</div>
         </div>
       </div>
     </div>
   );
 }
+

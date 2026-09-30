@@ -49,7 +49,7 @@ export default function LandingPage() {
 
             {isLoggedIn ? (
               <Link to="/dashboard" className="btn-refill-cta">
-                📊 {currentUser?.role === 'visitor' ? 'Visitor Panel' : 'Admin Panel'}
+                📊 Portal Dashboard
               </Link>
             ) : (
               <Link to="/login" className="btn-refill-cta">
@@ -80,7 +80,7 @@ export default function LandingPage() {
             <div className="hero-cta-group" style={{ justifyContent: 'center', width: '100%', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               {isLoggedIn ? (
                 <Link to="/dashboard" className="hero-btn-primary" style={{ padding: '0.85rem 2rem', fontSize: '1.05rem' }}>
-                  📊 Open Portal ({currentUser?.role === 'visitor' ? 'Visitor' : 'Admin'})
+                  📊 Open Portal Dashboard
                 </Link>
               ) : (
                 <>

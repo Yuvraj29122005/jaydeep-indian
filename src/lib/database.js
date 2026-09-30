@@ -1321,46 +1321,6 @@ export async function removeAppUser(id) {
   } catch (_e) {}
 }
 
-export const VISITOR_USER = {
-  id: 'visitor-01',
-  username: 'visitor',
-  email: 'visitor@jaydeepgas.com',
-  name: 'Demo Visitor',
-  role: 'visitor',
-  permissions: {
-    dashboard: 'view',
-    customers: 'view',
-    invoices: 'view',
-    stock: 'view',
-    refill: 'view',
-    reports: 'view',
-    expenses: 'none',
-    notes: 'none',
-    settings: 'view',
-  },
-  status: 'active',
-};
-
-export const STAFF_USER = {
-  id: 'staff-01',
-  username: 'staff',
-  email: 'staff@jaydeepgas.com',
-  name: 'Agency Staff',
-  role: 'staff',
-  permissions: {
-    dashboard: 'full',
-    customers: 'edit',
-    invoices: 'edit',
-    stock: 'edit',
-    refill: 'edit',
-    reports: 'view',
-    expenses: 'none',
-    notes: 'view',
-    settings: 'view',
-  },
-  status: 'active',
-};
-
 export async function authenticateUser(identifier, password) {
   // Mobile keyboard safe cleaning (strips non-breaking spaces, zero-width chars, and trims)
   const cleanId = (identifier || '')
@@ -1385,23 +1345,7 @@ export async function authenticateUser(identifier, password) {
     return SUPER_ADMIN_USER;
   }
 
-  // 2. Check Built-in Visitor
-  if (
-    (cleanId === 'visitor' || cleanId === 'visitor1' || cleanId === 'guest') &&
-    (cleanPw === 'visitor' || cleanPw === 'visitor123' || cleanPw === 'guest' || cleanPw === '123456')
-  ) {
-    return VISITOR_USER;
-  }
-
-  // 3. Check Built-in Staff
-  if (
-    (cleanId === 'staff' || cleanId === 'staff1') &&
-    (cleanPw === 'staff' || cleanPw === 'staff123' || cleanPw === '123456')
-  ) {
-    return STAFF_USER;
-  }
-
-  // 4. Check Database users with a 5-second network timeout so mobile never hangs
+  // 2. Check Database users with a 5-second network timeout so mobile never hangs
   try {
     const fetchPromise = supabase
       .from('app_users')
@@ -1429,7 +1373,7 @@ export async function authenticateUser(identifier, password) {
     console.warn('Supabase authenticateUser error/timeout, checking local users:', err.message || err);
   }
 
-  // 5. Check Local Storage fallback
+  // 3. Check Local Storage fallback
   try {
     const raw = localStorage.getItem(LOCAL_USERS_KEY);
     if (raw) {
@@ -1450,6 +1394,7 @@ export async function authenticateUser(identifier, password) {
 
   return null;
 }
+
 
 function mapUserFromDB(row) {
   return {

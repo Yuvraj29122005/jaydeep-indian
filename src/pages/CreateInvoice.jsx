@@ -498,7 +498,7 @@ export default function CreateInvoice() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
+      <div className="create-invoice-grid">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
           {/* Customer & Date */}
@@ -747,8 +747,10 @@ export default function CreateInvoice() {
               <button className="btn btn-success btn-sm" onClick={addItem}>➕ Add Item</button>
             </div>
             <div className="card-body">
-              {/* Header row */}
-              <div style={{
+              <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', paddingBottom: 6 }}>
+                <div style={{ minWidth: invoiceType === 'Empty Bottle' ? 560 : 720 }}>
+                  {/* Header row */}
+                  <div style={{
                 display: 'grid',
                 gridTemplateColumns: invoiceType === 'Empty Bottle'
                   ? '180px 140px 1fr 40px'
@@ -919,6 +921,8 @@ export default function CreateInvoice() {
                   </div>
                 );
               })}
+                </div>
+              </div>
               {errors.items && <p className="text-danger" style={{ fontSize: '0.78rem', marginTop: 8 }}>{errors.items}</p>}
             </div>
           </div>
@@ -948,7 +952,7 @@ export default function CreateInvoice() {
         </div>
 
         {/* Right Panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'sticky', top: 80 }}>
+        <div className="create-invoice-sidebar" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {invoiceType === 'Standard' ? (
             <>
               {/* Payment Details for Standard Invoices */}

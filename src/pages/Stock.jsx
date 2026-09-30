@@ -222,7 +222,7 @@ export default function Stock() {
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
             {CYLINDER_TYPES.map(type => {
               const m = metrics[type] || {
                 warehouseFilled: 0,
