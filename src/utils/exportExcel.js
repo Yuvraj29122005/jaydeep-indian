@@ -244,18 +244,23 @@ export function exportInvoiceExcel(invoice, customSettings = null) {
     [settings.tagline || 'Authorized Indane LPG Distributor'],
     [`GSTIN: ${settings.gstin || '—'}  |  PAN: ${settings.panNumber || '—'}`],
     [],
-    ['Invoice Type:', isEB ? 'Empty Bottle Collection Invoice' : 'Standard Refill Invoice'],
+    ['Invoice Type:', isEB ? 'Empty Bottle Return Voucher' : 'Standard Refill Invoice'],
     ['Invoice Number:', invoice.invoiceNumber],
     ['Date:', formatDate(invoice.date)],
     ['Customer:', invoice.customerName],
-    ['Payment Mode:', invoice.paymentMode],
-    ['Payment Status:', invoice.paymentStatus],
+    ...(isEB ? [
+      ['Voucher Type:', 'Non-Monetary Cylinder Collection'],
+      ['Ledger Impact:', 'Customer Holding Credited & Godown Empties Added'],
+    ] : [
+      ['Payment Mode:', invoice.paymentMode],
+      ['Payment Status:', invoice.paymentStatus],
+    ]),
     [],
   ];
 
   // Item table headers
   const itemHeaders = isEB
-    ? ['Cylinder Type', 'Empty Bottles Collected', 'Rate / Refund (₹)', 'Amount (₹)']
+    ? ['Cylinder Variety', 'Empty Bottles Collected', 'Ledger Credit Status']
     : ['Cylinder Type', 'Quantity', 'Unit Price (₹)', 'Market Price (₹)', 'Discount (%)', 'Amount (₹)', 'Empty Collected'];
 
   wsData.push(itemHeaders);
@@ -269,7 +274,7 @@ export function exportInvoiceExcel(invoice, customSettings = null) {
 
     wsData.push(
       isEB
-        ? [item.cylinderType, item.qty, formatCurrency(item.unitPrice), formatCurrency(amount)]
+        ? [item.cylinderType, `${item.qty} Cylinders`, 'Credited to Godown & Customer Ledger']
         : [
             item.cylinderType, item.qty,
             formatCurrency(item.unitPrice), formatCurrency(mktPrice),
@@ -283,20 +288,28 @@ export function exportInvoiceExcel(invoice, customSettings = null) {
   wsData.push([]);
 
   // Totals
-  wsData.push([...Array(colCount - 2).fill(''), 'Total Amount:', formatCurrency(invoice.totalAmount)]);
-  wsData.push([...Array(colCount - 2).fill(''), 'Amount Paid:', formatCurrency(invoice.paidAmount)]);
-  wsData.push([...Array(colCount - 2).fill(''), 'Balance Due:', formatCurrency(invoice.totalAmount - (Number(invoice.paidAmount) || 0))]);
+  if (isEB) {
+    const totalBottles = invoice.items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+    wsData.push([...Array(Math.max(0, colCount - 2)).fill(''), 'Total Empty Bottles:', `${totalBottles} Cylinders`]);
+    wsData.push([...Array(Math.max(0, colCount - 2)).fill(''), 'Charges:', '₹0 (Non-Monetary Voucher)']);
+  } else {
+    wsData.push([...Array(colCount - 2).fill(''), 'Total Amount:', formatCurrency(invoice.totalAmount)]);
+    wsData.push([...Array(colCount - 2).fill(''), 'Amount Paid:', formatCurrency(invoice.paidAmount)]);
+    wsData.push([...Array(colCount - 2).fill(''), 'Balance Due:', formatCurrency(invoice.totalAmount - (Number(invoice.paidAmount) || 0))]);
+  }
   wsData.push([]);
 
-  // Bank Details
-  wsData.push(['Bank Details:', `${settings.bankName} | A/C: ${settings.accountNumber} | IFSC: ${settings.ifscCode} | UPI: ${settings.upiId}`]);
+  // Bank Details (Only for monetary invoices)
+  if (!isEB) {
+    wsData.push(['Bank Details:', `${settings.bankName} | A/C: ${settings.accountNumber} | IFSC: ${settings.ifscCode} | UPI: ${settings.upiId}`]);
+  }
   if (invoice.notes) wsData.push(['Notes:', invoice.notes]);
-  wsData.push(['', `Thank you for your business! — ${settings.agencyName}`]);
+  wsData.push(['', `Authorized Distributor — ${settings.agencyName}`]);
 
   // Create worksheet
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   ws['!cols'] = isEB
-    ? [{ wch: 22 }, { wch: 22 }, { wch: 20 }, { wch: 18 }]
+    ? [{ wch: 22 }, { wch: 26 }, { wch: 38 }]
     : [{ wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 16 }];
 
   // Merges for title rows
@@ -326,24 +339,25 @@ export function exportInvoiceExcel(invoice, customSettings = null) {
   // Style item data rows
   const itemEndRow = itemStartRow + invoice.items.length - 1;
   const itemColStyles = isEB
-    ? ['bold', 'center', 'right', 'right']
+    ? ['bold', 'center', 'left']
     : ['bold', 'center', 'right', 'right', 'center', 'right', 'center'];
   styleDataRows(ws, itemStartRow, itemEndRow, colCount, itemColStyles);
 
   // Style totals
   const totalsStart = itemEndRow + 2;
-  for (let i = 0; i < 3; i++) {
+  const totalsRowsCount = isEB ? 2 : 3;
+  for (let i = 0; i < totalsRowsCount; i++) {
     const r = totalsStart + i;
-    const labelRef = XLSX.utils.encode_cell({ r, c: colCount - 2 });
+    const labelRef = XLSX.utils.encode_cell({ r, c: Math.max(0, colCount - 2) });
     const valRef = XLSX.utils.encode_cell({ r, c: colCount - 1 });
-    styleCell(ws, labelRef, i === 2 ? { ...STYLES.totalLabel, font: FONT.danger } : STYLES.totalLabel);
-    styleCell(ws, valRef, i === 2
+    styleCell(ws, labelRef, isEB ? STYLES.totalLabel : (i === 2 ? { ...STYLES.totalLabel, font: FONT.danger } : STYLES.totalLabel));
+    styleCell(ws, valRef, isEB ? STYLES.totalValue : (i === 2
       ? { ...STYLES.totalValue, font: FONT.danger, fill: { fgColor: { rgb: COLORS.dangerBg } } }
-      : STYLES.totalValue);
+      : STYLES.totalValue));
   }
 
   // Style footer rows
-  const footerStart = totalsStart + 4;
+  const footerStart = totalsStart + totalsRowsCount + 1;
   for (let r = footerStart; r < wsData.length; r++) {
     styleRow(ws, r, 0, colCount - 1, STYLES.footer);
   }

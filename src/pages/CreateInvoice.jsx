@@ -330,8 +330,10 @@ export default function CreateInvoice() {
         }
       }
 
-      if (item.unitPrice === '' || Number(item.unitPrice) < 0) {
-        errs[`price_${idx}`] = 'Invalid price';
+      if (invoiceType === 'Standard') {
+        if (item.unitPrice === '' || Number(item.unitPrice) < 0) {
+          errs[`price_${idx}`] = 'Invalid price';
+        }
       }
     });
 
@@ -361,7 +363,7 @@ export default function CreateInvoice() {
           ...item,
           cylinderType: item.cylinderType,
           qty: itemQty,
-          unitPrice: Number(item.unitPrice) || 0,
+          unitPrice: isEB ? 0 : (Number(item.unitPrice) || 0),
           emptyCollected: item.isNC ? false : (isEB ? true : Boolean(item.emptyCollected)),
           emptyCount: item.isNC ? 0 : (isEB ? itemQty : (Boolean(item.emptyCollected) ? (Number(item.emptyCount) || itemQty) : 0)),
           itemType: isEB ? 'empty' : 'filled',
@@ -369,11 +371,11 @@ export default function CreateInvoice() {
           isNC: Boolean(item.isNC),
         };
       }),
-      totalAmount,
-      paidAmount: isEB && totalAmount === 0 ? 0 : (Number(paidAmount) || 0),
-      paymentMode,
-      paymentScreenshot,
-      paymentStatus: getPaymentStatus(),
+      totalAmount: isEB ? 0 : totalAmount,
+      paidAmount: isEB ? 0 : (Number(paidAmount) || 0),
+      paymentMode: isEB ? 'N/A' : paymentMode,
+      paymentScreenshot: isEB ? '' : paymentScreenshot,
+      paymentStatus: isEB ? 'Paid' : getPaymentStatus(),
       deliveryStatus: isEB ? 'Collected' : 'Pending',
       notes,
       privateNotes,
@@ -749,19 +751,30 @@ export default function CreateInvoice() {
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: invoiceType === 'Empty Bottle'
-                  ? '160px 140px 130px 110px 40px'
+                  ? '180px 140px 1fr 40px'
                   : '130px 80px 120px 100px 80px 140px 40px',
                 gap: 10, marginBottom: 8,
                 fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600,
                 textTransform: 'uppercase', letterSpacing: '0.05em'
               }}>
-                <span>Type</span>
-                <span>{invoiceType === 'Empty Bottle' ? 'Empty Bottles Collected' : 'Qty (Filled)'}</span>
-                <span>{invoiceType === 'Empty Bottle' ? 'Rate / Credit (₹)' : 'Unit Price (₹)'}</span>
-                <span>Amount</span>
-                {invoiceType === 'Standard' && <span>NC</span>}
-                {invoiceType === 'Standard' && <span>Empty Collected</span>}
-                <span></span>
+                {invoiceType === 'Empty Bottle' ? (
+                  <>
+                    <span>Cylinder Variety</span>
+                    <span>Empties Collected</span>
+                    <span>Warehouse Stock & Customer Balance Impact</span>
+                    <span></span>
+                  </>
+                ) : (
+                  <>
+                    <span>Type</span>
+                    <span>Qty (Filled)</span>
+                    <span>Unit Price (₹)</span>
+                    <span>Amount</span>
+                    <span>NC</span>
+                    <span>Empty Collected</span>
+                    <span></span>
+                  </>
+                )}
               </div>
 
               {items.map((item, idx) => {
@@ -773,7 +786,7 @@ export default function CreateInvoice() {
                   <div key={idx} className="invoice-item-row" style={{
                     display: 'grid',
                     gridTemplateColumns: invoiceType === 'Empty Bottle'
-                      ? '160px 140px 130px 110px 40px'
+                      ? '180px 140px 1fr 40px'
                       : '130px 80px 120px 100px 80px 140px 40px',
                     gap: 10, alignItems: 'center', marginBottom: 12
                   }}>
@@ -795,107 +808,104 @@ export default function CreateInvoice() {
                         onChange={e => updateItem(idx, 'qty', e.target.value)}
                         placeholder="Count"
                       />
-                      {invoiceType === 'Standard' ? (
+                      {invoiceType === 'Standard' && (
                         <div style={{ fontSize: '0.7rem', color: stockInfo.filledCount < item.qty ? 'var(--danger)' : 'var(--text-muted)', marginTop: 2 }}>
                           Stock: {stockInfo.filledCount}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: '0.7rem', color: 'var(--success)', marginTop: 2 }}>
-                          Empty Stock: {stockInfo.emptyCount} (+{Number(item.qty) || 0})
-                          {selectedCustomer && (
-                            <span style={{ color: 'var(--text-secondary)', display: 'block' }}>
-                              Pending: {netCustPending}
-                            </span>
-                          )}
                         </div>
                       )}
                       {errors[`qty_${idx}`] && <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>{errors[`qty_${idx}`]}</div>}
                     </div>
 
-                    {/* Unit Price / Rate */}
-                    <div>
-                      <input
-                        className="form-control"
-                        type="number"
-                        min="0"
-                        value={item.unitPrice}
-                        onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
-                        placeholder="₹0"
-                      />
-                      {invoiceType === 'Empty Bottle' && (
-                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                          ₹0 for normal receipt
-                        </div>
-                      )}
-                      {errors[`price_${idx}`] && <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>{errors[`price_${idx}`]}</div>}
-                    </div>
-
-                    {/* Amount */}
-                    <div className="fw-600 text-accent">
-                      ₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}
-                    </div>
-
-                    {/* NC Toggle for Standard Invoice */}
-                    {invoiceType === 'Standard' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <label className="checkbox-wrap" style={{ margin: 0 }} title="New Connection — bottle permanently belongs to customer, no empty return expected">
-                          <input
-                            type="checkbox"
-                            checked={item.isNC || false}
-                            onChange={e => updateItem(idx, 'isNC', e.target.checked)}
-                          />
-                          <span className="checkbox-label" style={{
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            color: item.isNC ? '#7c3aed' : 'var(--text-muted)'
-                          }}>NC</span>
-                        </label>
-                        {item.isNC && (
-                          <span style={{
-                            fontSize: '0.6rem', color: '#7c3aed', fontWeight: 600,
-                            background: 'rgba(139,92,246,0.1)', padding: '1px 6px',
-                            borderRadius: 4, marginTop: 2
-                          }}>Permanent</span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Empty Collected Checkbox for Standard Invoice */}
-                    {invoiceType === 'Standard' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {item.isNC ? (
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                            No empty return
+                    {invoiceType === 'Empty Bottle' ? (
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span className="badge badge-success" style={{ fontSize: '0.75rem', padding: '4px 8px' }}>
+                          🟢 Warehouse Empty: {stockInfo.emptyCount} (+{Number(item.qty) || 0} to stock)
+                        </span>
+                        {selectedCustomer && (
+                          <span className="badge badge-warning" style={{ fontSize: '0.75rem', padding: '4px 8px' }}>
+                            👥 Customer Holding: {netCustPending} pending
                           </span>
-                        ) : (
-                          <>
-                            <label className="checkbox-wrap" style={{ margin: 0 }}>
-                              <input
-                                type="checkbox"
-                                checked={item.emptyCollected}
-                                onChange={e => updateItem(idx, 'emptyCollected', e.target.checked)}
-                              />
-                              <span className="checkbox-label" style={{ fontSize: '0.8rem' }}>Collect Empty</span>
-                            </label>
-                            {item.emptyCollected && (
-                              <input
-                                className="form-control"
-                                type="number"
-                                min="0"
-                                value={item.emptyCount}
-                                onChange={e => updateItem(idx, 'emptyCount', e.target.value)}
-                                placeholder="Count"
-                                style={{ padding: '4px 8px', fontSize: '0.8rem', width: '80%' }}
-                              />
-                            )}
-                            {selectedCustomer && netCustPending > 0 && (
-                              <span style={{ fontSize: '0.68rem', color: 'var(--danger)' }}>
-                                Pending: {netCustPending}
-                              </span>
-                            )}
-                          </>
                         )}
                       </div>
+                    ) : (
+                      <>
+                        {/* Unit Price / Rate */}
+                        <div>
+                          <input
+                            className="form-control"
+                            type="number"
+                            min="0"
+                            value={item.unitPrice}
+                            onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
+                            placeholder="₹0"
+                          />
+                          {errors[`price_${idx}`] && <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>{errors[`price_${idx}`]}</div>}
+                        </div>
+
+                        {/* Amount */}
+                        <div className="fw-600 text-accent">
+                          ₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}
+                        </div>
+
+                        {/* NC Toggle for Standard Invoice */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <label className="checkbox-wrap" style={{ margin: 0 }} title="New Connection — bottle permanently belongs to customer, no empty return expected">
+                            <input
+                              type="checkbox"
+                              checked={item.isNC || false}
+                              onChange={e => updateItem(idx, 'isNC', e.target.checked)}
+                            />
+                            <span className="checkbox-label" style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              color: item.isNC ? '#7c3aed' : 'var(--text-muted)'
+                            }}>NC</span>
+                          </label>
+                          {item.isNC && (
+                            <span style={{
+                              fontSize: '0.6rem', color: '#7c3aed', fontWeight: 600,
+                              background: 'rgba(139,92,246,0.1)', padding: '1px 6px',
+                              borderRadius: 4, marginTop: 2
+                            }}>Permanent</span>
+                          )}
+                        </div>
+
+                        {/* Empty Collected Checkbox for Standard Invoice */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {item.isNC ? (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                              No empty return
+                            </span>
+                          ) : (
+                            <>
+                              <label className="checkbox-wrap" style={{ margin: 0 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={item.emptyCollected}
+                                  onChange={e => updateItem(idx, 'emptyCollected', e.target.checked)}
+                                />
+                                <span className="checkbox-label" style={{ fontSize: '0.8rem' }}>Collect Empty</span>
+                              </label>
+                              {item.emptyCollected && (
+                                <input
+                                  className="form-control"
+                                  type="number"
+                                  min="0"
+                                  value={item.emptyCount}
+                                  onChange={e => updateItem(idx, 'emptyCount', e.target.value)}
+                                  placeholder="Count"
+                                  style={{ padding: '4px 8px', fontSize: '0.8rem', width: '80%' }}
+                                />
+                              )}
+                              {selectedCustomer && netCustPending > 0 && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--danger)' }}>
+                                  Pending: {netCustPending}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </>
                     )}
 
                     <button
@@ -939,130 +949,235 @@ export default function CreateInvoice() {
 
         {/* Right Panel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'sticky', top: 80 }}>
-          {/* Payment */}
-          <div className="card">
-            <div className="card-header">
-              <span className="card-title">💳 {invoiceType === 'Empty Bottle' ? 'Receipt & Payment' : 'Payment'}</span>
-            </div>
-            <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="form-group">
-                <label className="form-label">Payment Mode</label>
-                <select className="form-control" value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
-                  {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              {(paymentMode === 'UPI' || paymentMode === 'Bank Transfer') && (
-                <div className="form-group">
-                  <label className="form-label">Payment Screenshot</label>
-                  <input
-                    className="form-control"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleScreenshotUpload}
-                    style={{ fontSize: '0.8rem', padding: '6px' }}
-                  />
-                  {paymentScreenshot && <img src={paymentScreenshot} alt="Screenshot preview" style={{ marginTop: 8, maxHeight: 100, borderRadius: 4, objectFit: 'cover' }} />}
+          {invoiceType === 'Standard' ? (
+            <>
+              {/* Payment Details for Standard Invoices */}
+              <div className="card">
+                <div className="card-header">
+                  <span className="card-title">💳 Payment Details</span>
                 </div>
-              )}
-              <div className="form-group">
-                <label className="form-label">Amount Paid (₹)</label>
-                <input
-                  className="form-control"
-                  type="number"
-                  min="0"
-                  max={totalAmount}
-                  value={paidAmount}
-                  onChange={e => setPaidAmount(e.target.value)}
-                  placeholder={totalAmount === 0 ? "0" : "0"}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Summary */}
-          <div className="card">
-            <div className="card-header"><span className="card-title">🧮 Summary</span></div>
-            <div className="card-body">
-              <div className="totals-box" style={{ maxWidth: '100%' }}>
-                {items.map((item, idx) => (
-                  <div className="total-row" key={idx} style={{ fontSize: '0.82rem' }}>
-                    <span className="text-muted">
-                      {item.qty}× {item.cylinderType} {invoiceType === 'Empty Bottle' ? '(Empty)' : ''}
-                      {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700 }}> [NC]</span>}
-                    </span>
-                    <span>₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</span>
+                <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div className="form-group">
+                    <label className="form-label">Payment Mode</label>
+                    <select className="form-control" value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
+                      {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </div>
-                ))}
-                <div className="total-row grand">
-                  <span>Total</span>
-                  <span>₹{totalAmount.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="total-row" style={{ color: 'var(--success)' }}>
-                  <span>Paid</span>
-                  <span>₹{(Number(paidAmount) || 0).toLocaleString('en-IN')}</span>
-                </div>
-                {balance > 0 && (
-                  <div className="total-row balance">
-                    <span>Balance Due</span>
-                    <span>₹{balance.toLocaleString('en-IN')}</span>
+                  {(paymentMode === 'UPI' || paymentMode === 'Bank Transfer') && (
+                    <div className="form-group">
+                      <label className="form-label">Payment Screenshot</label>
+                      <input
+                        className="form-control"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleScreenshotUpload}
+                        style={{ fontSize: '0.8rem', padding: '6px' }}
+                      />
+                      {paymentScreenshot && <img src={paymentScreenshot} alt="Screenshot preview" style={{ marginTop: 8, maxHeight: 100, borderRadius: 4, objectFit: 'cover' }} />}
+                    </div>
+                  )}
+                  <div className="form-group">
+                    <label className="form-label">Amount Paid (₹)</label>
+                    <input
+                      className="form-control"
+                      type="number"
+                      min="0"
+                      max={totalAmount}
+                      value={paidAmount}
+                      onChange={e => setPaidAmount(e.target.value)}
+                      placeholder={totalAmount === 0 ? "0" : "0"}
+                    />
                   </div>
-                )}
-                <div style={{ marginTop: 12, padding: '8px', background: 'var(--accent-light)', borderRadius: 6, fontSize: '0.78rem', textAlign: 'center' }}>
-                  Status: <strong className="text-accent">{getPaymentStatus()}</strong>
                 </div>
               </div>
 
-              {/* Bottle collection status summary */}
-              <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-primary)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                <div className="fw-600 mb-8" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  🫙 Bottle Collection Impact:
-                </div>
-                {items.map((item, idx) => {
-                  const emptyCount = item.isNC ? 0 : (
-                    invoiceType === 'Empty Bottle'
-                      ? (Number(item.qty) || 0)
-                      : (item.emptyCollected ? (Number(item.emptyCount) || Number(item.qty) || 0) : 0)
-                  );
+              {/* Monetary Summary for Standard Invoices */}
+              <div className="card">
+                <div className="card-header"><span className="card-title">🧮 Invoice Summary</span></div>
+                <div className="card-body">
+                  <div className="totals-box" style={{ maxWidth: '100%' }}>
+                    {items.map((item, idx) => (
+                      <div className="total-row" key={idx} style={{ fontSize: '0.82rem' }}>
+                        <span className="text-muted">
+                          {item.qty}× {item.cylinderType}
+                          {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700 }}> [NC]</span>}
+                        </span>
+                        <span>₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                    <div className="total-row grand">
+                      <span>Total Amount</span>
+                      <span>₹{totalAmount.toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="total-row" style={{ color: 'var(--success)' }}>
+                      <span>Paid Amount</span>
+                      <span>₹{(Number(paidAmount) || 0).toLocaleString('en-IN')}</span>
+                    </div>
+                    {balance > 0 && (
+                      <div className="total-row balance">
+                        <span>Balance Due</span>
+                        <span>₹{balance.toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
+                    <div style={{ marginTop: 12, padding: '8px', background: 'var(--accent-light)', borderRadius: 6, fontSize: '0.78rem', textAlign: 'center' }}>
+                      Status: <strong className="text-accent">{getPaymentStatus()}</strong>
+                    </div>
+                  </div>
 
-                  return (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
-                      <span>
-                        {item.cylinderType}
-                        {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700, marginLeft: 4 }}>[NC]</span>}
+                  {/* Bottle collection status summary */}
+                  <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-primary)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                    <div className="fw-600 mb-8" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                      🫙 Empty Bottle Collection on Delivery:
+                    </div>
+                    {items.map((item, idx) => {
+                      const emptyCount = item.isNC ? 0 : (item.emptyCollected ? (Number(item.emptyCount) || Number(item.qty) || 0) : 0);
+
+                      return (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
+                          <span>
+                            {item.cylinderType}
+                            {item.isNC && <span style={{ color: '#7c3aed', fontWeight: 700, marginLeft: 4 }}>[NC]</span>}
+                          </span>
+                          <span>
+                            {item.isNC ? (
+                              <strong style={{ color: '#7c3aed' }}>🏠 Permanent (no return)</strong>
+                            ) : emptyCount > 0 ? (
+                              <strong style={{ color: 'var(--success)' }}>✅ Collect {emptyCount}</strong>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)' }}>— No empty collected</span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700 }}>
+                      <span>Total Empty Collected:</span>
+                      <span style={{ color: 'var(--success)' }}>{totalEmptyInInvoice} bottles</span>
+                    </div>
+                    {totalNCBottles > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700, marginTop: 4 }}>
+                        <span>🏠 NC Bottles (Permanent):</span>
+                        <span style={{ color: '#7c3aed' }}>{totalNCBottles} bottles</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%', marginTop: 20, padding: 13, fontWeight: 700 }}
+                    onClick={handleSubmit}
+                  >
+                    {isEditing ? '💾 Save Changes' : '✅ Create Refill Invoice'}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* EMPTY BOTTLE SUMMARY — PURE BOTTLE RECEIPT, NO MONEY */
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">🫙 Bottle Collection Receipt</span>
+              </div>
+              <div className="card-body">
+                <div style={{
+                  padding: '10px 14px',
+                  background: 'rgba(59, 130, 246, 0.08)',
+                  border: '1px solid rgba(59, 130, 246, 0.2)',
+                  borderRadius: 8,
+                  fontSize: '0.82rem',
+                  color: 'var(--text-primary)',
+                  marginBottom: 16,
+                  lineHeight: 1.4
+                }}>
+                  📄 <strong>Non-Monetary Receipt:</strong> This receipt records empty cylinders returned by the customer. No monetary charges or payments are required.
+                </div>
+
+                <div className="totals-box" style={{ maxWidth: '100%', marginBottom: 16 }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>
+                    Cylinders Being Collected:
+                  </div>
+                  {items.map((item, idx) => (
+                    <div className="total-row" key={idx} style={{ fontSize: '0.88rem', padding: '6px 0' }}>
+                      <span className="fw-600">
+                        {item.cylinderType} Cylinder
                       </span>
-                      <span>
-                        {item.isNC ? (
-                          <strong style={{ color: '#7c3aed' }}>🏠 Permanent (no return)</strong>
-                        ) : emptyCount > 0 ? (
-                          <strong style={{ color: 'var(--success)' }}>✅ Collect {emptyCount}</strong>
-                        ) : (
-                          <span style={{ color: 'var(--text-muted)' }}>— No empty collected</span>
-                        )}
+                      <span className="fw-700 text-success" style={{ fontSize: '1rem' }}>
+                        +{Number(item.qty) || 0} bottles
                       </span>
                     </div>
-                  );
-                })}
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700 }}>
-                  <span>Total Empty Collected:</span>
-                  <span style={{ color: 'var(--success)' }}>{totalEmptyInInvoice} bottles</span>
+                  ))}
+                  <div className="total-row grand" style={{ marginTop: 10, borderTop: '2px solid var(--border)' }}>
+                    <span>Total Empties Collected</span>
+                    <span style={{ color: 'var(--success)', fontSize: '1.2rem', fontWeight: 800 }}>
+                      {totalEmptyInInvoice} Cylinders
+                    </span>
+                  </div>
                 </div>
-                {totalNCBottles > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700, marginTop: 4 }}>
-                    <span>🏠 NC Bottles (Permanent):</span>
-                    <span style={{ color: '#7c3aed' }}>{totalNCBottles} bottles</span>
+
+                {/* Warehouse Stock Impact */}
+                <div style={{
+                  padding: 12,
+                  background: 'rgba(34, 197, 94, 0.06)',
+                  border: '1px solid rgba(34, 197, 94, 0.2)',
+                  borderRadius: 8,
+                  marginBottom: 16,
+                  fontSize: '0.82rem'
+                }}>
+                  <div style={{ fontWeight: 700, color: 'var(--success)', marginBottom: 6 }}>
+                    🏢 Warehouse Stock Credit:
+                  </div>
+                  <div>
+                    • <strong>+{totalEmptyInInvoice} empty cylinders</strong> will be immediately credited to your warehouse empty stock upon saving.
+                  </div>
+                </div>
+
+                {/* Customer Holding Impact */}
+                {selectedCustomer && (
+                  <div style={{
+                    padding: 12,
+                    background: 'var(--bg-primary)',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    fontSize: '0.82rem',
+                    marginBottom: 16
+                  }}>
+                    <div style={{ fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      👤 Customer Pending Balance Impact:
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span className="text-muted">Previous Pending:</span>
+                      <strong>{totalPendingEmpty} bottles</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--success)' }}>
+                      <span>Collected Today:</span>
+                      <strong>-{totalEmptyInInvoice} bottles</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 6, borderTop: '1px dashed var(--border)', fontWeight: 700 }}>
+                      <span>Remaining with Customer:</span>
+                      <span style={{ color: Math.max(0, totalPendingEmpty - totalEmptyInInvoice) > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                        {Math.max(0, totalPendingEmpty - totalEmptyInInvoice)} bottles
+                      </span>
+                    </div>
                   </div>
                 )}
-              </div>
 
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', marginTop: 20, padding: 13, fontWeight: 700 }}
-                onClick={handleSubmit}
-              >
-                {isEditing ? '💾 Save Changes' : (invoiceType === 'Empty Bottle' ? '✅ Create Empty Bottle Invoice' : '✅ Create Refill Invoice')}
-              </button>
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  style={{
+                    width: '100%',
+                    padding: '13px',
+                    fontSize: '0.98rem',
+                    fontWeight: 700,
+                    boxShadow: '0 4px 14px rgba(34, 197, 94, 0.3)'
+                  }}
+                  onClick={handleSubmit}
+                >
+                  ✓ Record Empty Bottle Collection
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -75,7 +75,11 @@ export default function InvoiceDetail() {
             <span className={`badge ${isEB ? 'badge-info' : 'badge-primary'}`}>
               {isEB ? '🫙 Empty Bottle Collection' : '🟢 Refill Invoice'}
             </span>
-            {payBadge(paymentStatus)}
+            {isEB ? (
+              <span className="badge badge-success">🫙 Bottle Credit Logged</span>
+            ) : (
+              payBadge(paymentStatus)
+            )}
             {saved && <span className="badge badge-success">✓ Saved!</span>}
           </div>
         </div>
@@ -129,14 +133,18 @@ export default function InvoiceDetail() {
           </div>
           <div className="inv-number text-accent">{invoice.invoiceNumber}</div>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 6 }}>📅 Date: {invoice.date}</div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>💳 Mode: {invoice.paymentMode}</div>
+          {isEB ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--success)', fontWeight: 600 }}>🫙 Type: Empty Return Voucher</div>
+          ) : (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>💳 Mode: {invoice.paymentMode}</div>
+          )}
         </div>
       </div>
 
       {/* Info Grid */}
       <div className="invoice-grid">
         <div className="invoice-section">
-          <h4>👤 Bill To</h4>
+          <h4>👤 {isEB ? 'Customer / Agency' : 'Bill To'}</h4>
           <div className="inv-field"><span className="label">Name</span><span className="value fw-600">{invoice.customerName}</span></div>
           <div className="inv-field"><span className="label">Phone</span><span className="value">{invoice.customerPhone || '—'}</span></div>
           <div className="inv-field"><span className="label">Address</span><span className="value" style={{ maxWidth: 240, textAlign: 'right' }}>{invoice.customerAddress || '—'}</span></div>
@@ -166,23 +174,41 @@ export default function InvoiceDetail() {
           )}
         </div>
 
-        <div className="invoice-section no-print">
-          <h4>📋 Status Management</h4>
-          <div className="form-group">
-            <label className="form-label">Amount Paid (₹)</label>
-            <input
-              className="form-control"
-              type="number"
-              min="0"
-              max={invoice.totalAmount}
-              value={paidAmount}
-              onChange={e => setPaidAmount(Number(e.target.value))}
-            />
+        {isEB ? (
+          <div className="invoice-section no-print" style={{ background: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.25)' }}>
+            <h4 style={{ color: 'var(--success)' }}>🫙 Bottle Collection Ledger</h4>
+            <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              This is a <strong>non-monetary cylinder collection voucher</strong>.
+              <br />
+              • Zero monetary charges or fees apply.
+              <br />
+              • The empty bottles have been credited to the godown inventory.
+              <br />
+              • The customer's pending bottle balance has been decreased.
+            </div>
+            <div style={{ marginTop: 14, padding: '8px 12px', background: 'var(--bg-primary)', borderRadius: 6, border: '1px solid var(--border)', fontSize: '0.8rem', fontWeight: 600, color: 'var(--success)' }}>
+              ✓ Stock & Customer Bottle Ledger Reconciled
+            </div>
           </div>
-          <button className="btn btn-primary btn-sm mt-12" style={{ width: '100%' }} onClick={saveChanges}>
-            💾 Save Changes
-          </button>
-        </div>
+        ) : (
+          <div className="invoice-section no-print">
+            <h4>📋 Status Management</h4>
+            <div className="form-group">
+              <label className="form-label">Amount Paid (₹)</label>
+              <input
+                className="form-control"
+                type="number"
+                min="0"
+                max={invoice.totalAmount}
+                value={paidAmount}
+                onChange={e => setPaidAmount(Number(e.target.value))}
+              />
+            </div>
+            <button className="btn btn-primary btn-sm mt-12" style={{ width: '100%' }} onClick={saveChanges}>
+              💾 Save Changes
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Items Table */}
@@ -195,24 +221,32 @@ export default function InvoiceDetail() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr>
-                <th>Cylinder Type</th>
-                <th>{isEB ? 'Empty Collected' : 'Quantity (Filled)'}</th>
-                <th>{isEB ? 'Rate / Credit (₹)' : 'Unit Price (₹)'}</th>
-                <th>Amount</th>
-                <th>Bottle Status</th>
-              </tr>
+              {isEB ? (
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th>Empty Bottles Collected</th>
+                  <th>Ledger Credit Status</th>
+                </tr>
+              ) : (
+                <tr>
+                  <th>Cylinder Type</th>
+                  <th>Quantity (Filled)</th>
+                  <th>Unit Price (₹)</th>
+                  <th>Amount</th>
+                  <th>Bottle Status</th>
+                </tr>
+              )}
             </thead>
             <tbody>
               {invoice.items.map((item, idx) => (
                 <tr key={idx}>
                   <td className="fw-600">{item.cylinderType}</td>
-                  <td>{item.qty}</td>
-                  <td>₹{(Number(item.unitPrice) || 0).toLocaleString('en-IN')}</td>
-                  <td className="fw-600 text-accent">₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</td>
+                  <td>{item.qty} {isEB ? 'Cylinders' : 'Units'}</td>
+                  {!isEB && <td>₹{(Number(item.unitPrice) || 0).toLocaleString('en-IN')}</td>}
+                  {!isEB && <td className="fw-600 text-accent">₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</td>}
                   <td>
                     {isEB ? (
-                      <span className="badge badge-success">✅ Collected {item.qty} empty</span>
+                      <span className="badge badge-success">✅ Credited {item.qty} empty bottles to Godown</span>
                     ) : (
                       item.emptyCollected
                         ? <span className="badge badge-success">✅ Collected {item.emptyCount !== undefined ? item.emptyCount : item.qty} empty</span>
@@ -226,27 +260,43 @@ export default function InvoiceDetail() {
         </div>
 
         <div className="card-body" style={{ paddingTop: 0 }}>
-          <div className="totals-box">
-            <div className="total-row grand">
-              <span>Total Amount</span>
-              <span>₹{invoice.totalAmount.toLocaleString('en-IN')}</span>
-            </div>
-            <div className="total-row" style={{ color: 'var(--success)' }}>
-              <span>Amount Paid</span>
-              <span>₹{(Number(paidAmount) || 0).toLocaleString('en-IN')}</span>
-            </div>
-            {balance > 0 && (
-              <div className="total-row balance">
-                <span>Balance Due</span>
-                <span>₹{balance.toLocaleString('en-IN')}</span>
+          {isEB ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', background: 'rgba(34, 197, 94, 0.08)', borderRadius: 10, border: '1px solid rgba(34, 197, 94, 0.25)', marginTop: 12 }}>
+              <div>
+                <strong style={{ color: 'var(--success)', display: 'block', fontSize: '1.05rem', fontWeight: 700 }}>
+                  🫙 Total Empty Bottles Collected:
+                </strong>
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  Non-monetary return voucher • Zero monetary charge • Customer holding liability reduced
+                </span>
               </div>
-            )}
-          </div>
+              <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--success)' }}>
+                {invoice.items.reduce((s, it) => s + (Number(it.qty) || 0), 0)} Cylinders
+              </div>
+            </div>
+          ) : (
+            <div className="totals-box">
+              <div className="total-row grand">
+                <span>Total Amount</span>
+                <span>₹{invoice.totalAmount.toLocaleString('en-IN')}</span>
+              </div>
+              <div className="total-row" style={{ color: 'var(--success)' }}>
+                <span>Amount Paid</span>
+                <span>₹{(Number(paidAmount) || 0).toLocaleString('en-IN')}</span>
+              </div>
+              {balance > 0 && (
+                <div className="total-row balance">
+                  <span>Balance Due</span>
+                  <span>₹{balance.toLocaleString('en-IN')}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bank & Payment Details */}
-      {(currentSettings.bankName || currentSettings.upiId) && (
+      {/* Bank & Payment Details (Only for Refill/Monetary Invoices) */}
+      {!isEB && (currentSettings.bankName || currentSettings.upiId) && (
         <div className="card mb-20 bank-details-card">
           <div className="card-header" style={{ padding: '10px 18px', background: 'rgba(234, 88, 12, 0.04)' }}>
             <span className="card-title" style={{ fontSize: '0.88rem' }}>🏦 Bank & Online Payment Details</span>

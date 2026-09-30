@@ -65,7 +65,7 @@ export function exportInvoicePDF(invoice, customSettings = null) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text(`Date: ${invoice.date}`, 14, 58);
-  doc.text(`Payment Mode: ${invoice.paymentMode}`, 14, 66);
+  doc.text(isEB ? 'Voucher Type: Empty Bottle Return' : `Payment Mode: ${invoice.paymentMode}`, 14, 66);
 
   const deliveryColor = invoice.deliveryStatus === 'Delivered' || invoice.deliveryStatus === 'Collected' ? [22, 163, 74]
     : invoice.deliveryStatus === 'Out for Delivery' ? [234, 88, 12] : [100, 116, 139];
@@ -75,17 +75,23 @@ export function exportInvoicePDF(invoice, customSettings = null) {
   doc.setFontSize(8);
   doc.text(`Status: ${invoice.deliveryStatus}`, 39, 75, { align: 'center' });
 
-  const payColor = invoice.paymentStatus === 'Paid' ? [22, 163, 74]
-    : invoice.paymentStatus === 'Partial' ? [234, 88, 12] : [220, 38, 38];
-  doc.setFillColor(...payColor);
-  doc.roundedRect(68, 70, 45, 7, 2, 2, 'F');
-  doc.text(`Payment: ${invoice.paymentStatus}`, 90.5, 75, { align: 'center' });
+  if (isEB) {
+    doc.setFillColor(22, 163, 74);
+    doc.roundedRect(68, 70, 52, 7, 2, 2, 'F');
+    doc.text(`Credit: Bottle Return`, 94, 75, { align: 'center' });
+  } else {
+    const payColor = invoice.paymentStatus === 'Paid' ? [22, 163, 74]
+      : invoice.paymentStatus === 'Partial' ? [234, 88, 12] : [220, 38, 38];
+    doc.setFillColor(...payColor);
+    doc.roundedRect(68, 70, 45, 7, 2, 2, 'F');
+    doc.text(`Payment: ${invoice.paymentStatus}`, 90.5, 75, { align: 'center' });
+  }
 
   // Bill to
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text('Bill To:', 14, 88);
+  doc.text(isEB ? 'Customer / Agency:' : 'Bill To:', 14, 88);
   doc.setFont('helvetica', 'normal');
   doc.text(invoice.customerName, 14, 95);
   doc.text(invoice.customerPhone || '', 14, 101);
@@ -94,7 +100,7 @@ export function exportInvoicePDF(invoice, customSettings = null) {
 
   // Items table
   const tableHead = isEB
-    ? [['Cylinder', 'Empty Collected', 'Rate/Refund', 'Amount', 'Status']]
+    ? [['Cylinder Variety', 'Empty Bottles Collected', 'Ledger Status']]
     : [['Cylinder', 'Qty', 'Unit Price', 'Market Price', 'Discount', 'Amount', 'Empty']];
 
   const tableBody = invoice.items.map(item => {
@@ -107,10 +113,8 @@ export function exportInvoicePDF(invoice, customSettings = null) {
     return isEB
       ? [
           item.cylinderType,
-          `${item.qty} bottles`,
-          item.unitPrice > 0 ? `Rs. ${item.unitPrice}` : 'Rs. 0 (Collection)',
-          `Rs. ${amt.toLocaleString('en-IN')}`,
-          'Collected',
+          `${item.qty} Cylinders`,
+          'Credited to Godown & Customer Ledger',
         ]
       : [
           item.cylinderType,
@@ -128,43 +132,64 @@ export function exportInvoicePDF(invoice, customSettings = null) {
     head: tableHead,
     body: tableBody,
     theme: 'grid',
-    headStyles: { fillColor: isEB ? [59, 130, 246] : [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: isEB ? [34, 197, 94] : [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: 8, cellPadding: 3.5 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
   });
 
   const finalY = doc.lastAutoTable.finalY + 8;
 
   // Totals Box
-  doc.setFillColor(248, 250, 252);
-  doc.rect(115, finalY - 4, 85, 30, 'F');
-  doc.setDrawColor(226, 232, 240);
-  doc.rect(115, finalY - 4, 85, 30, 'S');
+  if (isEB) {
+    const totalBottles = invoice.items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+    doc.setFillColor(240, 253, 244);
+    doc.rect(110, finalY - 4, 90, 26, 'F');
+    doc.setDrawColor(187, 247, 208);
+    doc.rect(110, finalY - 4, 90, 26, 'S');
 
-  doc.setFontSize(9);
-  doc.setTextColor(50, 50, 50);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Total Amount:`, 120, finalY + 3);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Rs. ${invoice.totalAmount.toLocaleString('en-IN')}`, 194, finalY + 3, { align: 'right' });
-
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Amount Paid:`, 120, finalY + 11);
-  doc.setTextColor(22, 163, 74);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Rs. ${(Number(invoice.paidAmount) || 0).toLocaleString('en-IN')}`, 194, finalY + 11, { align: 'right' });
-
-  const balance = invoice.totalAmount - (Number(invoice.paidAmount) || 0);
-  if (balance > 0) {
+    doc.setFontSize(9);
+    doc.setTextColor(22, 101, 52);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(220, 38, 38);
-    doc.text(`Balance Due:`, 120, finalY + 19);
-    doc.text(`Rs. ${balance.toLocaleString('en-IN')}`, 194, finalY + 19, { align: 'right' });
+    doc.text(`Total Empty Bottles:`, 115, finalY + 4);
+    doc.setFontSize(11);
+    doc.text(`${totalBottles} Cylinders`, 194, finalY + 4, { align: 'right' });
+
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(21, 128, 61);
+    doc.text(`* Non-monetary return voucher (Zero charges)`, 115, finalY + 12);
+    doc.text(`* Customer bottle holding credited`, 115, finalY + 18);
+  } else {
+    doc.setFillColor(248, 250, 252);
+    doc.rect(115, finalY - 4, 85, 30, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(115, finalY - 4, 85, 30, 'S');
+
+    doc.setFontSize(9);
+    doc.setTextColor(50, 50, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Total Amount:`, 120, finalY + 3);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Rs. ${invoice.totalAmount.toLocaleString('en-IN')}`, 194, finalY + 3, { align: 'right' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Amount Paid:`, 120, finalY + 11);
+    doc.setTextColor(22, 163, 74);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Rs. ${(Number(invoice.paidAmount) || 0).toLocaleString('en-IN')}`, 194, finalY + 11, { align: 'right' });
+
+    const balance = invoice.totalAmount - (Number(invoice.paidAmount) || 0);
+    if (balance > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(220, 38, 38);
+      doc.text(`Balance Due:`, 120, finalY + 19);
+      doc.text(`Rs. ${balance.toLocaleString('en-IN')}`, 194, finalY + 19, { align: 'right' });
+    }
   }
 
-  // Bank & UPI Box on left
+  // Bank & UPI Box on left (Skip on Empty Bottle receipts)
   let extraY = finalY;
-  if (settings.bankName || settings.upiId) {
+  if (!isEB && (settings.bankName || settings.upiId)) {
     doc.setFillColor(241, 245, 249);
     doc.rect(14, extraY - 4, 95, 30, 'F');
     doc.setDrawColor(203, 213, 225);

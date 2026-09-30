@@ -455,36 +455,143 @@ function mapCustomerToDB(customer) {
 
 // ==================== STOCK ====================
 
+const LOCAL_STOCK_KEY = 'jig_stock_cache';
+
+const DEFAULT_INITIAL_STOCK = [
+  { cylinderType: '5kg', filledCount: 50, emptyCount: 20 },
+  { cylinderType: '19kg', filledCount: 150, emptyCount: 60 },
+  { cylinderType: '47.5kg', filledCount: 40, emptyCount: 15 },
+];
+
 export async function fetchStock() {
-  const { data, error } = await supabase
-    .from('stock')
-    .select('*')
-    .order('cylinder_type', { ascending: true });
-  if (error) throw error;
-  return data.map(mapStockFromDB);
+  try {
+    const { data, error } = await supabase
+      .from('stock')
+      .select('*')
+      .order('cylinder_type', { ascending: true });
+
+    if (!error && data && data.length > 0) {
+      const stockList = data.map(mapStockFromDB);
+      
+      // Ensure all 3 varieties ('5kg', '19kg', '47.5kg') exist
+      const existingTypes = new Set(stockList.map(s => s.cylinderType));
+      for (const def of DEFAULT_INITIAL_STOCK) {
+        if (!existingTypes.has(def.cylinderType)) {
+          try {
+            const { data: inserted } = await supabase
+              .from('stock')
+              .insert({
+                cylinder_type: def.cylinderType,
+                filled_count: def.filledCount,
+                empty_count: def.emptyCount,
+              })
+              .select()
+              .single();
+            if (inserted) stockList.push(mapStockFromDB(inserted));
+          } catch (_e) {
+            stockList.push({ id: `def-${def.cylinderType}`, ...def });
+          }
+        }
+      }
+
+      try {
+        localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(stockList));
+      } catch (_e) {}
+
+      return stockList;
+    } else if (!error && (!data || data.length === 0)) {
+      // Table is empty in Supabase, seed default stock for all 3 varieties
+      const seeded = [];
+      for (const def of DEFAULT_INITIAL_STOCK) {
+        try {
+          const { data: ins } = await supabase
+            .from('stock')
+            .insert({
+              cylinder_type: def.cylinderType,
+              filled_count: def.filledCount,
+              empty_count: def.emptyCount,
+            })
+            .select()
+            .single();
+          if (ins) seeded.push(mapStockFromDB(ins));
+          else seeded.push({ id: `def-${def.cylinderType}`, ...def });
+        } catch (_e) {
+          seeded.push({ id: `def-${def.cylinderType}`, ...def });
+        }
+      }
+
+      try {
+        localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(seeded));
+      } catch (_e) {}
+
+      return seeded;
+    }
+  } catch (err) {
+    console.warn('Supabase fetchStock error, reading from local cache:', err);
+  }
+
+  // Fallback to localStorage or defaults
+  try {
+    const saved = localStorage.getItem(LOCAL_STOCK_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (_e) {}
+
+  return DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${idx}`, ...item }));
 }
 
 export async function patchStock(cylinderType, updates) {
   const dbUpdates = {};
-  if (updates.filledCount !== undefined) dbUpdates.filled_count = updates.filledCount;
-  if (updates.emptyCount !== undefined) dbUpdates.empty_count = updates.emptyCount;
+  if (updates.filledCount !== undefined) dbUpdates.filled_count = Number(updates.filledCount);
+  if (updates.emptyCount !== undefined) dbUpdates.empty_count = Number(updates.emptyCount);
 
-  const { data, error } = await supabase
-    .from('stock')
-    .update(dbUpdates)
-    .eq('cylinder_type', cylinderType)
-    .select()
-    .single();
-  if (error) throw error;
-  return mapStockFromDB(data);
+  // Update local cache immediately
+  try {
+    const saved = localStorage.getItem(LOCAL_STOCK_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const updated = parsed.map(s => s.cylinderType === cylinderType ? { ...s, ...updates } : s);
+      localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(updated));
+    }
+  } catch (_e) {}
+
+  try {
+    const { data, error } = await supabase
+      .from('stock')
+      .update(dbUpdates)
+      .eq('cylinder_type', cylinderType)
+      .select();
+
+    if (!error && data && data.length > 0) {
+      return mapStockFromDB(data[0]);
+    }
+
+    // If update returned 0 rows (row did not exist), upsert it!
+    const { data: upsertData, error: upsertErr } = await supabase
+      .from('stock')
+      .upsert({
+        cylinder_type: cylinderType,
+        filled_count: updates.filledCount !== undefined ? Number(updates.filledCount) : 0,
+        empty_count: updates.emptyCount !== undefined ? Number(updates.emptyCount) : 0,
+      })
+      .select()
+      .single();
+
+    if (!upsertErr && upsertData) {
+      return mapStockFromDB(upsertData);
+    }
+  } catch (err) {
+    console.warn('Supabase patchStock error, updated locally:', err);
+  }
+
+  return { cylinderType, ...updates };
 }
 
 function mapStockFromDB(row) {
   return {
     id: row.id,
     cylinderType: row.cylinder_type,
-    filledCount: row.filled_count,
-    emptyCount: row.empty_count,
+    filledCount: Number(row.filled_count) || 0,
+    emptyCount: Number(row.empty_count) || 0,
   };
 }
 

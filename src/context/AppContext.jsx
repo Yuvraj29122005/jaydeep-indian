@@ -366,22 +366,24 @@ export function AppProvider({ children }) {
   // ==================== STOCK ====================
 
   const updateStock = async (cylinderType, filledDelta, emptyDelta) => {
-    let newFilled = 0;
-    let newEmpty = 0;
-    setStock(prev => prev.map(st => {
-      if (st.cylinderType === cylinderType) {
-        newFilled = Math.max(0, (st.filledCount || 0) + Number(filledDelta || 0));
-        newEmpty = Math.max(0, (st.emptyCount || 0) + Number(emptyDelta || 0));
-        return { ...st, filledCount: newFilled, emptyCount: newEmpty };
-      }
-      return st;
-    }));
+    return withLoading(async () => {
+      let newFilled = 0;
+      let newEmpty = 0;
+      setStock(prev => prev.map(st => {
+        if (st.cylinderType === cylinderType) {
+          newFilled = Math.max(0, (st.filledCount || 0) + Number(filledDelta || 0));
+          newEmpty = Math.max(0, (st.emptyCount || 0) + Number(emptyDelta || 0));
+          return { ...st, filledCount: newFilled, emptyCount: newEmpty };
+        }
+        return st;
+      }));
 
-    try {
-      await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
-    } catch (err) {
-      console.error('Failed to update stock:', err);
-    }
+      try {
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+      } catch (err) {
+        console.error('Failed to update stock:', err);
+      }
+    }, 'Updating Cylinder Stock...', 'Syncing inventory counts with database');
   };
 
   const updateStockBatch = async (varietyDeltas) => {
@@ -427,7 +429,86 @@ export function AppProvider({ children }) {
     }, 'Updating Warehouse Stock...', 'Adjusting cylinder quantities');
   };
 
-  const getStockByType = (type) => stock.find(s => s.cylinderType === type) || { filledCount: 0, emptyCount: 0 };
+  const getStockByType = (type) => stock.find(s => s.cylinderType === type) || { cylinderType: type, filledCount: 0, emptyCount: 0 };
+
+  const setStockDirect = async (cylinderType, filledCount, emptyCount) => {
+    return withLoading(async () => {
+      const newFilled = Math.max(0, Number(filledCount) || 0);
+      const newEmpty = Math.max(0, Number(emptyCount) || 0);
+
+      setStock(prev => {
+        const exists = prev.some(st => st.cylinderType === cylinderType);
+        if (exists) {
+          return prev.map(st => st.cylinderType === cylinderType ? { ...st, filledCount: newFilled, emptyCount: newEmpty } : st);
+        }
+        return [...prev, { cylinderType, filledCount: newFilled, emptyCount: newEmpty }];
+      });
+
+      try {
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+      } catch (err) {
+        console.error('Failed to set stock direct:', err);
+      }
+    }, 'Updating Cylinder Stock...', 'Saving new inventory counts');
+  };
+
+  const refreshStock = async () => {
+    return withLoading(async () => {
+      try {
+        const fresh = await db.fetchStock();
+        setStock(fresh || []);
+        return fresh;
+      } catch (err) {
+        console.error('Failed to refresh stock:', err);
+        return stock;
+      }
+    }, 'Syncing Cylinder Stock...', 'Fetching freshest variety counts from database');
+  };
+
+  const getCylinderMetrics = useCallback(() => {
+    const metrics = {};
+    CYLINDER_TYPES.forEach(type => {
+      const s = stock.find(st => st.cylinderType === type) || { filledCount: 0, emptyCount: 0 };
+      const warehouseFilled = Number(s.filledCount) || 0;
+      const warehouseEmpty = Number(s.emptyCount) || 0;
+      const warehouseTotal = warehouseFilled + warehouseEmpty;
+
+      let withCustomers = 0;
+      let ncPermanentlySold = 0;
+      let totalDelivered = 0;
+
+      customers.forEach(cust => {
+        const estock = cust.emptyBottleStock?.[type] || { withCustomer: 0, collected: 0 };
+        const pending = Math.max(0, (Number(estock.withCustomer) || 0) - (Number(estock.collected) || 0));
+        withCustomers += pending;
+
+        const nc = Number(cust.ncBottles?.[type]) || 0;
+        ncPermanentlySold += nc;
+
+        const bal = cust.bottleBalance?.[type] || { filledGiven: 0, emptyCollected: 0 };
+        totalDelivered += (Number(bal.filledGiven) || 0);
+      });
+
+      const inTransitRefill = refillTrips
+        .filter(t => t.status === 'Sent' && t.cylinderType === type)
+        .reduce((sum, t) => sum + (Number(t.emptySentCount) || 0), 0);
+
+      const totalAgencyPool = warehouseTotal + withCustomers + inTransitRefill;
+
+      metrics[type] = {
+        cylinderType: type,
+        warehouseFilled,
+        warehouseEmpty,
+        warehouseTotal,
+        withCustomers,
+        inTransitRefill,
+        ncPermanentlySold,
+        totalAgencyPool,
+        totalDelivered,
+      };
+    });
+    return metrics;
+  }, [stock, customers, refillTrips]);
 
   // ==================== INVOICES ====================
 
@@ -1055,6 +1136,7 @@ export function AppProvider({ children }) {
       marketPrices, marketPricesMeta, updateMarketPrices, updateCustomerDiscounts,
       agencySettings, agencySettingsMeta, updateAgencySettings, resetAgencySettings,
       stock, updateStock, updateStockBatch, addStockManual, getStockByType,
+      setStockDirect, refreshStock, getCylinderMetrics,
       invoices, createInvoice, updateInvoice, editInvoiceFull, deleteInvoice,
       updateBottleBalance, setBottleBalanceDirect, updateEmptyBottleStock,
       expenses, addExpense, updateExpense, deleteExpense,
