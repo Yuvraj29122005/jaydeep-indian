@@ -22,25 +22,28 @@ export default function Reports() {
     return (!dateFrom || inv.date >= dateFrom) && (!dateTo || inv.date <= dateTo);
   }), [invoices, dateFrom, dateTo]);
 
-  const totalRevenue = filtered.reduce((s, i) => s + i.totalAmount, 0);
-  const totalCollected = filtered.reduce((s, i) => s + i.paidAmount, 0);
+  const totalRevenue = filtered.reduce((s, i) => s + (Number(i.totalAmount) || 0), 0);
+  const totalCollected = filtered.reduce((s, i) => s + (Number(i.paidAmount) || 0), 0);
   const totalOutstanding = totalRevenue - totalCollected;
-  const totalCylinders = filtered.reduce((s, i) => s + i.items.reduce((ss, item) => ss + item.qty, 0), 0);
+  const totalCylinders = filtered.reduce((s, i) => s + (i.items || []).reduce((ss, item) => ss + (Number(item.qty) || 0), 0), 0);
 
   // Customer-wise data
   const customerRevMap = {};
   filtered.forEach(inv => {
-    if (!customerRevMap[inv.customerName]) customerRevMap[inv.customerName] = { name: inv.customerName, revenue: 0, orders: 0 };
-    customerRevMap[inv.customerName].revenue += inv.totalAmount;
-    customerRevMap[inv.customerName].orders += 1;
+    const custName = inv.customerName || 'Unknown';
+    if (!customerRevMap[custName]) customerRevMap[custName] = { name: custName, revenue: 0, orders: 0 };
+    customerRevMap[custName].revenue += (Number(inv.totalAmount) || 0);
+    customerRevMap[custName].orders += 1;
   });
   const topCustomers = Object.values(customerRevMap).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
 
   // Cylinder-wise data
   const cylRevMap = { '5kg': 0, '19kg': 0, '47.5kg': 0 };
   filtered.forEach(inv => {
-    inv.items.forEach(item => {
-      cylRevMap[item.cylinderType] = (cylRevMap[item.cylinderType] || 0) + (item.qty * item.unitPrice);
+    (inv.items || []).forEach(item => {
+      if (cylRevMap[item.cylinderType] !== undefined) {
+        cylRevMap[item.cylinderType] += ((Number(item.qty) || 0) * (Number(item.unitPrice) || 0));
+      }
     });
   });
   const cylData = Object.entries(cylRevMap).map(([name, value]) => ({ name, value }));
@@ -48,43 +51,50 @@ export default function Reports() {
   // Payment mode breakdown
   const payModeMap = {};
   filtered.forEach(inv => {
-    payModeMap[inv.paymentMode] = (payModeMap[inv.paymentMode] || 0) + inv.paidAmount;
+    const mode = inv.paymentMode || 'Cash';
+    payModeMap[mode] = (payModeMap[mode] || 0) + (Number(inv.paidAmount) || 0);
   });
   const payModeData = Object.entries(payModeMap).map(([name, value]) => ({ name, value }));
 
   // Daily revenue
   const dailyMap = {};
   filtered.forEach(inv => {
-    if (!dailyMap[inv.date]) dailyMap[inv.date] = { date: inv.date, revenue: 0, collected: 0, totalInvoices: 0, outstanding: 0 };
-    dailyMap[inv.date].revenue += inv.totalAmount;
-    dailyMap[inv.date].collected += inv.paidAmount;
-    dailyMap[inv.date].totalInvoices += 1;
-    dailyMap[inv.date].outstanding += (inv.totalAmount - inv.paidAmount);
+    const dStr = inv.date || 'Unknown';
+    if (!dailyMap[dStr]) dailyMap[dStr] = { date: dStr, revenue: 0, collected: 0, totalInvoices: 0, outstanding: 0 };
+    const tot = Number(inv.totalAmount) || 0;
+    const paid = Number(inv.paidAmount) || 0;
+    dailyMap[dStr].revenue += tot;
+    dailyMap[dStr].collected += paid;
+    dailyMap[dStr].totalInvoices += 1;
+    dailyMap[dStr].outstanding += (tot - paid);
   });
-  const dailyData = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
+  const dailyData = Object.values(dailyMap).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
   // Monthly revenue (computed from real invoices)
   const monthlyMap = {};
   filtered.forEach(inv => {
-    const month = inv.date.slice(0, 7); // YYYY-MM
+    const month = (inv.date || '').slice(0, 7) || 'Unknown'; // YYYY-MM
     if (!monthlyMap[month]) monthlyMap[month] = { month, revenue: 0, collected: 0, totalInvoices: 0, outstanding: 0 };
-    monthlyMap[month].revenue += inv.totalAmount;
-    monthlyMap[month].collected += inv.paidAmount;
+    const tot = Number(inv.totalAmount) || 0;
+    const paid = Number(inv.paidAmount) || 0;
+    monthlyMap[month].revenue += tot;
+    monthlyMap[month].collected += paid;
     monthlyMap[month].totalInvoices += 1;
-    monthlyMap[month].outstanding += (inv.totalAmount - inv.paidAmount);
+    monthlyMap[month].outstanding += (tot - paid);
   });
-  const monthlyDataReport = Object.values(monthlyMap).sort((a, b) => a.month.localeCompare(b.month));
+  const monthlyDataReport = Object.values(monthlyMap).sort((a, b) => (a.month || '').localeCompare(b.month || ''));
 
   // Monthly sales data for chart (computed from real invoices)
   const monthlySalesData = useMemo(() => {
     const mMap = {};
     invoices.forEach(inv => {
-      const month = new Date(inv.date).toLocaleString('en-US', { month: 'short' });
+      const d = inv.date ? new Date(inv.date) : new Date();
+      const month = isNaN(d.getTime()) ? 'Unknown' : d.toLocaleString('en-US', { month: 'short' });
       if (!mMap[month]) mMap[month] = { month, '5kg': 0, '19kg': 0, '47.5kg': 0, revenue: 0 };
-      mMap[month].revenue += inv.totalAmount;
-      inv.items.forEach(item => {
+      mMap[month].revenue += (Number(inv.totalAmount) || 0);
+      (inv.items || []).forEach(item => {
         if (mMap[month][item.cylinderType] !== undefined) {
-          mMap[month][item.cylinderType] += item.qty;
+          mMap[month][item.cylinderType] += (Number(item.qty) || 0);
         }
       });
     });

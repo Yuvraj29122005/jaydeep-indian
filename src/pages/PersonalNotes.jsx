@@ -33,12 +33,12 @@ export default function PersonalNotes() {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(n =>
-        n.title.toLowerCase().includes(q) ||
-        n.content.toLowerCase().includes(q)
+        (n.title || '').toLowerCase().includes(q) ||
+        (n.content || '').toLowerCase().includes(q)
       );
     }
 
-    filtered.sort((a, b) => b.date.localeCompare(a.date) || new Date(b.createdAt) - new Date(a.createdAt));
+    filtered.sort((a, b) => (b.date || '').localeCompare(a.date || '') || new Date(b.createdAt) - new Date(a.createdAt));
 
     const groups = {};
     filtered.forEach(note => {

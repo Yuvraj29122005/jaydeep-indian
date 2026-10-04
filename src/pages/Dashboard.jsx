@@ -84,12 +84,13 @@ export default function Dashboard() {
   const monthlySalesData = useMemo(() => {
     const monthMap = {};
     invoices.forEach(inv => {
-      const month = new Date(inv.date).toLocaleString('en-US', { month: 'short' });
+      const d = inv.date ? new Date(inv.date) : new Date();
+      const month = isNaN(d.getTime()) ? 'Unknown' : d.toLocaleString('en-US', { month: 'short' });
       if (!monthMap[month]) monthMap[month] = { month, '5kg': 0, '19kg': 0, '47.5kg': 0, revenue: 0 };
-      monthMap[month].revenue += inv.totalAmount;
-      inv.items.forEach(item => {
+      monthMap[month].revenue += (Number(inv.totalAmount) || 0);
+      (inv.items || []).forEach(item => {
         if (monthMap[month][item.cylinderType] !== undefined) {
-          monthMap[month][item.cylinderType] += item.qty;
+          monthMap[month][item.cylinderType] += (Number(item.qty) || 0);
         }
       });
     });

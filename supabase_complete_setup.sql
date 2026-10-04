@@ -153,3 +153,76 @@ SELECT
   'Admin'
 WHERE NOT EXISTS (SELECT 1 FROM public.agency_settings);
 
+-- 6. INVOICE TABLE MIGRATION - Add invoice_type and market_prices_snapshot columns
+-- These are safe to run multiple times (IF NOT EXISTS / DO NOTHING pattern)
+DO $$
+BEGIN
+  -- Add invoice_type column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'invoices' AND column_name = 'invoice_type'
+  ) THEN
+    ALTER TABLE public.invoices ADD COLUMN invoice_type TEXT DEFAULT 'Standard';
+  END IF;
+
+  -- Add market_prices_snapshot column if it doesn't exist  
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'invoices' AND column_name = 'market_prices_snapshot'
+  ) THEN
+    ALTER TABLE public.invoices ADD COLUMN market_prices_snapshot JSONB DEFAULT NULL;
+  END IF;
+END $$;
+
+-- Backfill invoice_type for existing invoices that have [Type: Empty Bottle] in notes
+UPDATE public.invoices
+SET invoice_type = 'Empty Bottle'
+WHERE invoice_type IS NULL OR invoice_type = 'Standard'
+  AND (notes ILIKE '%[Type: Empty Bottle]%' OR items::text ILIKE '%"itemType":"empty"%');
+
+-- 7. WAREHOUSE STOCK INVENTORY TABLE
+CREATE TABLE IF NOT EXISTS public.stock (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  cylinder_type TEXT UNIQUE NOT NULL,
+  filled_count INTEGER NOT NULL DEFAULT 0,
+  empty_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.stock ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to stock" ON public.stock;
+CREATE POLICY "Allow all access to stock" ON public.stock
+  FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO public.stock (cylinder_type, filled_count, empty_count)
+VALUES 
+  ('5kg', 50, 20),
+  ('19kg', 150, 60),
+  ('47.5kg', 40, 15)
+ON CONFLICT (cylinder_type) DO NOTHING;
+
+-- 8. UNIVERSAL RLS POLICIES FOR ALL CORE TABLES
+-- Ensures the web application has seamless, unrestricted read/write permissions for all 9 tables
+DO $$
+BEGIN
+  -- Customers
+  EXECUTE 'ALTER TABLE IF EXISTS public.customers ENABLE ROW LEVEL SECURITY';
+  EXECUTE 'DROP POLICY IF EXISTS "Allow all access to customers" ON public.customers';
+  EXECUTE 'CREATE POLICY "Allow all access to customers" ON public.customers FOR ALL USING (true) WITH CHECK (true)';
+
+  -- Invoices
+  EXECUTE 'ALTER TABLE IF EXISTS public.invoices ENABLE ROW LEVEL SECURITY';
+  EXECUTE 'DROP POLICY IF EXISTS "Allow all access to invoices" ON public.invoices';
+  EXECUTE 'CREATE POLICY "Allow all access to invoices" ON public.invoices FOR ALL USING (true) WITH CHECK (true)';
+
+  -- Expenses
+  EXECUTE 'ALTER TABLE IF EXISTS public.expenses ENABLE ROW LEVEL SECURITY';
+  EXECUTE 'DROP POLICY IF EXISTS "Allow all access to expenses" ON public.expenses';
+  EXECUTE 'CREATE POLICY "Allow all access to expenses" ON public.expenses FOR ALL USING (true) WITH CHECK (true)';
+
+  -- Refill Trips
+  EXECUTE 'ALTER TABLE IF EXISTS public.refill_trips ENABLE ROW LEVEL SECURITY';
+  EXECUTE 'DROP POLICY IF EXISTS "Allow all access to refill_trips" ON public.refill_trips';
+  EXECUTE 'CREATE POLICY "Allow all access to refill_trips" ON public.refill_trips FOR ALL USING (true) WITH CHECK (true)';
+END $$;

@@ -28,6 +28,10 @@ export function AppProvider({ children }) {
   // Data states
   const [customers, setCustomers] = useState([]);
   const [stock, setStock] = useState([]);
+  const stockRef = useRef(stock);
+  useEffect(() => {
+    stockRef.current = stock;
+  }, [stock]);
   const [invoices, setInvoices] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [refillTrips, setRefillTrips] = useState([]);
@@ -137,6 +141,7 @@ export function AppProvider({ children }) {
       ]);
       setCustomers(customersData || []);
       setStock(stockData || []);
+      stockRef.current = stockData || [];
       setInvoices(invoicesData || []);
       setExpenses(expensesData || []);
       setRefillTrips(refillTripsData || []);
@@ -379,16 +384,24 @@ export function AppProvider({ children }) {
 
   const updateStock = async (cylinderType, filledDelta, emptyDelta) => {
     return withLoading(async () => {
-      let newFilled = 0;
-      let newEmpty = 0;
-      setStock(prev => prev.map(st => {
-        if (st.cylinderType === cylinderType) {
-          newFilled = Math.max(0, (st.filledCount || 0) + Number(filledDelta || 0));
-          newEmpty = Math.max(0, (st.emptyCount || 0) + Number(emptyDelta || 0));
-          return { ...st, filledCount: newFilled, emptyCount: newEmpty };
+      const currentStock = (stockRef.current && stockRef.current.length > 0) ? stockRef.current : stock;
+      const found = currentStock.find(st => st.cylinderType === cylinderType);
+      const currentFilled = found ? (Number(found.filledCount) || 0) : 0;
+      const currentEmpty = found ? (Number(found.emptyCount) || 0) : 0;
+
+      const newFilled = Math.max(0, currentFilled + Number(filledDelta || 0));
+      const newEmpty = Math.max(0, currentEmpty + Number(emptyDelta || 0));
+
+      const updatedList = CYLINDER_TYPES.map(t => {
+        if (t === cylinderType) {
+          return { cylinderType: t, filledCount: newFilled, emptyCount: newEmpty, ...(found?.id ? { id: found.id } : {}) };
         }
-        return st;
-      }));
+        const s = currentStock.find(item => item.cylinderType === t);
+        return s ? { ...s } : { cylinderType: t, filledCount: 0, emptyCount: 0 };
+      });
+
+      stockRef.current = updatedList;
+      setStock(updatedList);
 
       try {
         await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
@@ -399,19 +412,43 @@ export function AppProvider({ children }) {
   };
 
   const updateStockBatch = async (varietyDeltas) => {
-    const updatedStock = {};
-    setStock(prev => prev.map(st => {
-      const d = varietyDeltas[st.cylinderType];
-      if (d) {
-        const newFilled = Math.max(0, (st.filledCount || 0) + Number(d.filledDelta || 0));
-        const newEmpty = Math.max(0, (st.emptyCount || 0) + Number(d.emptyDelta || 0));
-        updatedStock[st.cylinderType] = { filledCount: newFilled, emptyCount: newEmpty };
-        return { ...st, filledCount: newFilled, emptyCount: newEmpty };
-      }
-      return st;
-    }));
+    const currentStock = (stockRef.current && stockRef.current.length > 0) ? stockRef.current : stock;
+    
+    // Build a map of all cylinder types, seeded with current values or defaults
+    const stockMap = {};
+    CYLINDER_TYPES.forEach(t => {
+      const found = currentStock.find(s => s.cylinderType === t);
+      stockMap[t] = {
+        cylinderType: t,
+        filledCount: found ? (Number(found.filledCount) || 0) : 0,
+        emptyCount: found ? (Number(found.emptyCount) || 0) : 0,
+        ...(found?.id ? { id: found.id } : {})
+      };
+    });
 
-    for (const [cylType, counts] of Object.entries(updatedStock)) {
+    const updatedStockEntries = {};
+
+    Object.entries(varietyDeltas).forEach(([cylType, delta]) => {
+      if (!stockMap[cylType]) {
+        stockMap[cylType] = { cylinderType: cylType, filledCount: 0, emptyCount: 0 };
+      }
+      const current = stockMap[cylType];
+      const newFilled = Math.max(0, current.filledCount + Number(delta.filledDelta || 0));
+      const newEmpty = Math.max(0, current.emptyCount + Number(delta.emptyDelta || 0));
+
+      stockMap[cylType] = {
+        ...current,
+        filledCount: newFilled,
+        emptyCount: newEmpty,
+      };
+      updatedStockEntries[cylType] = { filledCount: newFilled, emptyCount: newEmpty };
+    });
+
+    const newStockList = Object.values(stockMap);
+    stockRef.current = newStockList;
+    setStock(newStockList);
+
+    for (const [cylType, counts] of Object.entries(updatedStockEntries)) {
       try {
         await db.patchStock(cylType, counts);
       } catch (err) {
@@ -422,46 +459,56 @@ export function AppProvider({ children }) {
 
   const addStockManual = async (cylinderType, filledAdd, emptyAdd) => {
     return withLoading(async () => {
-      const s = stock.find(st => st.cylinderType === cylinderType);
+      const currentStock = (stockRef.current && stockRef.current.length > 0) ? stockRef.current : stock;
+      const s = currentStock.find(st => st.cylinderType === cylinderType);
       const currentFilled = s ? (Number(s.filledCount) || 0) : 0;
       const currentEmpty = s ? (Number(s.emptyCount) || 0) : 0;
 
       const newFilled = Math.max(0, currentFilled + Number(filledAdd || 0));
       const newEmpty = Math.max(0, currentEmpty + Number(emptyAdd || 0));
 
+      const updatedList = CYLINDER_TYPES.map(t => {
+        if (t === cylinderType) {
+          return { cylinderType: t, filledCount: newFilled, emptyCount: newEmpty, ...(s?.id ? { id: s.id } : {}) };
+        }
+        const found = currentStock.find(item => item.cylinderType === t);
+        return found ? { ...found } : { cylinderType: t, filledCount: 0, emptyCount: 0 };
+      });
+
+      stockRef.current = updatedList;
+      setStock(updatedList);
+
       try {
         await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
-        setStock(prev => {
-          const exists = prev.some(st => st.cylinderType === cylinderType);
-          if (exists) {
-            return prev.map(st =>
-              st.cylinderType === cylinderType
-                ? { ...st, filledCount: newFilled, emptyCount: newEmpty }
-                : st
-            );
-          }
-          return [...prev, { cylinderType, filledCount: newFilled, emptyCount: newEmpty }];
-        });
       } catch (err) {
         console.error('Failed to add stock:', err);
       }
     }, 'Updating Warehouse Stock...', 'Adjusting cylinder quantities');
   };
 
-  const getStockByType = (type) => stock.find(s => s.cylinderType === type) || { cylinderType: type, filledCount: 0, emptyCount: 0 };
+  const getStockByType = (type) => {
+    const currentStock = (stockRef.current && stockRef.current.length > 0) ? stockRef.current : stock;
+    return currentStock.find(s => s.cylinderType === type) || { cylinderType: type, filledCount: 0, emptyCount: 0 };
+  };
 
   const setStockDirect = async (cylinderType, filledCount, emptyCount) => {
     return withLoading(async () => {
       const newFilled = Math.max(0, Number(filledCount) || 0);
       const newEmpty = Math.max(0, Number(emptyCount) || 0);
 
-      setStock(prev => {
-        const exists = prev.some(st => st.cylinderType === cylinderType);
-        if (exists) {
-          return prev.map(st => st.cylinderType === cylinderType ? { ...st, filledCount: newFilled, emptyCount: newEmpty } : st);
+      const currentStock = (stockRef.current && stockRef.current.length > 0) ? stockRef.current : stock;
+      const found = currentStock.find(st => st.cylinderType === cylinderType);
+
+      const updatedList = CYLINDER_TYPES.map(t => {
+        if (t === cylinderType) {
+          return { cylinderType: t, filledCount: newFilled, emptyCount: newEmpty, ...(found?.id ? { id: found.id } : {}) };
         }
-        return [...prev, { cylinderType, filledCount: newFilled, emptyCount: newEmpty }];
+        const s = currentStock.find(item => item.cylinderType === t);
+        return s ? { ...s } : { cylinderType: t, filledCount: 0, emptyCount: 0 };
       });
+
+      stockRef.current = updatedList;
+      setStock(updatedList);
 
       try {
         await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
@@ -475,11 +522,13 @@ export function AppProvider({ children }) {
     const doFetch = async () => {
       try {
         const fresh = await db.fetchStock();
-        setStock(fresh || []);
-        return fresh;
+        const freshList = fresh || [];
+        stockRef.current = freshList;
+        setStock(freshList);
+        return freshList;
       } catch (err) {
         console.error('Failed to refresh stock:', err);
-        return stock;
+        return stockRef.current || stock;
       }
     };
 

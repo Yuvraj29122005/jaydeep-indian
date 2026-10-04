@@ -323,7 +323,14 @@ export async function patchCustomer(id, updates) {
         filledGiven: newBal ? (newBal['47.5kg']?.filledGiven || 0) : (currentBal['47.5kg']?.filledGiven || 0),
         emptyCollected: newBal ? (newBal['47.5kg']?.emptyCollected || 0) : (currentBal['47.5kg']?.emptyCollected || 0),
         stock: newStock ? (newStock['47.5kg'] || {withCustomer:0, collected:0}) : (currentBal['47.5kg']?.stock || {withCustomer:0, collected:0})
-      }
+      },
+      ncBottles: updates.ncBottles !== undefined ? updates.ncBottles : (currentBal.ncBottles || { '5kg': 0, '19kg': 0, '47.5kg': 0 })
+    };
+  } else if (updates.ncBottles !== undefined) {
+    const currentBal = current.bottle_balance || {};
+    dbUpdates.bottle_balance = {
+      ...currentBal,
+      ncBottles: updates.ncBottles
     };
   }
 
@@ -433,6 +440,7 @@ function mapCustomerFromDB(row) {
   const rawPrices = row.prices || {};
   const discounts = rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
   const discountAmounts = rawPrices.discountAmounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+  const ncBottles = row.nc_bottles || bal.ncBottles || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
 
   return {
     id: row.id,
@@ -449,6 +457,7 @@ function mapCustomerFromDB(row) {
     },
     discounts: discounts,
     discountAmounts: discountAmounts,
+    ncBottles,
     bottleBalance: {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0 },
       '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0 },
@@ -468,6 +477,7 @@ function mapCustomerToDB(customer) {
   const rawPrices = customer.prices || {};
   const discounts = customer.discounts || rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
   const discountAmounts = customer.discountAmounts || rawPrices.discountAmounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
+  const ncBottles = customer.ncBottles || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
 
   return {
     name: customer.name,
@@ -485,6 +495,7 @@ function mapCustomerToDB(customer) {
       '5kg': { filledGiven: bal['5kg']?.filledGiven || 0, emptyCollected: bal['5kg']?.emptyCollected || 0, stock: stock['5kg'] || { withCustomer: 0, collected: 0 } },
       '19kg': { filledGiven: bal['19kg']?.filledGiven || 0, emptyCollected: bal['19kg']?.emptyCollected || 0, stock: stock['19kg'] || { withCustomer: 0, collected: 0 } },
       '47.5kg': { filledGiven: bal['47.5kg']?.filledGiven || 0, emptyCollected: bal['47.5kg']?.emptyCollected || 0, stock: stock['47.5kg'] || { withCustomer: 0, collected: 0 } },
+      ncBottles,
     }
   };
 }
@@ -583,11 +594,18 @@ export async function patchStock(cylinderType, updates) {
   // Update local cache immediately
   try {
     const saved = localStorage.getItem(LOCAL_STOCK_KEY);
+    let stockArray = [];
     if (saved) {
-      const parsed = JSON.parse(saved);
-      const updated = parsed.map(s => s.cylinderType === cylinderType ? { ...s, ...updates } : s);
-      localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(updated));
+      try { stockArray = JSON.parse(saved); } catch (_e) { stockArray = []; }
     }
+    if (!Array.isArray(stockArray) || stockArray.length === 0) {
+      stockArray = DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${idx}`, ...item }));
+    }
+    const exists = stockArray.some(s => s.cylinderType === cylinderType);
+    const updated = exists
+      ? stockArray.map(s => s.cylinderType === cylinderType ? { ...s, ...updates } : s)
+      : [...stockArray, { id: `local-${cylinderType}`, cylinderType, filledCount: updates.filledCount ?? 0, emptyCount: updates.emptyCount ?? 0 }];
+    localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(updated));
   } catch (_e) {}
 
   try {
@@ -653,9 +671,11 @@ export async function insertInvoice(invoice) {
   return mapInvoiceFromDB(data);
 }
 
+
 export async function patchInvoice(id, updates) {
   const dbUpdates = {};
   if (updates.invoiceNumber !== undefined) dbUpdates.invoice_number = updates.invoiceNumber;
+  if (updates.invoiceType !== undefined) dbUpdates.invoice_type = updates.invoiceType;
   if (updates.date !== undefined) dbUpdates.date = updates.date;
   if (updates.customerId !== undefined) dbUpdates.customer_id = updates.customerId;
   if (updates.customerName !== undefined) dbUpdates.customer_name = updates.customerName;
@@ -668,6 +688,7 @@ export async function patchInvoice(id, updates) {
   if (updates.deliveryStatus !== undefined) dbUpdates.delivery_status = updates.deliveryStatus;
   if (updates.privateNotes !== undefined) dbUpdates.private_notes = updates.privateNotes;
   if (updates.paymentScreenshot !== undefined) dbUpdates.payment_screenshot = updates.paymentScreenshot;
+  if (updates.marketPricesSnapshot !== undefined) dbUpdates.market_prices_snapshot = updates.marketPricesSnapshot;
 
   const isEB = updates.invoiceType === 'Empty Bottle' || updates.items?.some(i => i.itemType === 'empty' || i.isBottleOnly);
   
@@ -709,9 +730,9 @@ export async function removeInvoice(id) {
 
 function mapInvoiceFromDB(row) {
   const rawNotes = row.notes || '';
-  const isEB = rawNotes.includes('[Type: Empty Bottle]') ||
-               Boolean(row.items && row.items.some(i => i.itemType === 'empty' || i.isBottleOnly)) ||
-               row.invoice_type === 'Empty Bottle';
+  const isEB = row.invoice_type === 'Empty Bottle' ||
+               rawNotes.includes('[Type: Empty Bottle]') ||
+               Boolean(row.items && row.items.some(i => i.itemType === 'empty' || i.isBottleOnly));
 
   const cleanNotes = rawNotes.replace(/\[Type:\s*Empty Bottle\]\s*/gi, '').trim();
 
@@ -733,6 +754,7 @@ function mapInvoiceFromDB(row) {
     notes: cleanNotes,
     privateNotes: row.private_notes || '',
     paymentScreenshot: row.payment_screenshot || '',
+    marketPricesSnapshot: row.market_prices_snapshot || null,
   };
 }
 
@@ -751,8 +773,9 @@ function mapInvoiceToDB(invoice) {
     isBottleOnly: isEB || Boolean(item.isBottleOnly),
   }));
 
-  return {
+  const dbObj = {
     invoice_number: invoice.invoiceNumber,
+    invoice_type: isEB ? 'Empty Bottle' : 'Standard',
     date: invoice.date,
     customer_id: invoice.customerId,
     customer_name: invoice.customerName,
@@ -768,6 +791,13 @@ function mapInvoiceToDB(invoice) {
     private_notes: invoice.privateNotes || '',
     payment_screenshot: invoice.paymentScreenshot || '',
   };
+
+  // Save market prices snapshot for historical discount tracking
+  if (invoice.marketPricesSnapshot) {
+    dbObj.market_prices_snapshot = invoice.marketPricesSnapshot;
+  }
+
+  return dbObj;
 }
 
 // ==================== EXPENSES ====================

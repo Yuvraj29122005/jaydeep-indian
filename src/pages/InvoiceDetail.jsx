@@ -238,23 +238,58 @@ export default function InvoiceDetail() {
               )}
             </thead>
             <tbody>
-              {invoice.items.map((item, idx) => (
-                <tr key={idx}>
-                  <td className="fw-600">{item.cylinderType}</td>
-                  <td>{item.qty} {isEB ? 'Cylinders' : 'Units'}</td>
-                  {!isEB && <td>₹{(Number(item.unitPrice) || 0).toLocaleString('en-IN')}</td>}
-                  {!isEB && <td className="fw-600 text-accent">₹{((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)).toLocaleString('en-IN')}</td>}
-                  <td>
-                    {isEB ? (
-                      <span className="badge badge-success">✅ Credited {item.qty} empty bottles to Godown</span>
-                    ) : (
-                      item.emptyCollected
-                        ? <span className="badge badge-success">✅ Collected {item.emptyCount !== undefined ? item.emptyCount : item.qty} empty</span>
-                        : <span className="badge badge-muted">Not Collected</span>
+              {invoice.items.map((item, idx) => {
+                const itemMarketPrice = Number(item.marketPrice) || (invoice.marketPricesSnapshot ? Number(invoice.marketPricesSnapshot[item.cylinderType]) : 0) || 0;
+                const itemUnitPrice = Number(item.unitPrice) || 0;
+                const itemDiscAmt = Number(item.discountAmount) || Math.max(0, itemMarketPrice - itemUnitPrice);
+                const itemDiscPct = Number(item.discountPercent) || (itemMarketPrice > 0 ? Number(((itemDiscAmt / itemMarketPrice) * 100).toFixed(1)) : 0);
+                const hasDiscount = !isEB && itemDiscAmt > 0 && itemMarketPrice > 0;
+
+                return (
+                  <tr key={idx}>
+                    <td className="fw-600">{item.cylinderType}</td>
+                    <td>{item.qty} {isEB ? 'Cylinders' : 'Units'}</td>
+                    {!isEB && (
+                      <td>
+                        <div>₹{itemUnitPrice.toLocaleString('en-IN')}</div>
+                        {hasDiscount && (
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 3, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textDecoration: 'line-through' }}>
+                              MRP ₹{itemMarketPrice.toLocaleString('en-IN')}
+                            </span>
+                            <span style={{
+                              fontSize: '0.65rem', fontWeight: 700, color: '#16a34a',
+                              background: 'rgba(34,197,94,0.1)', padding: '1px 6px',
+                              borderRadius: 10, lineHeight: '14px'
+                            }}>
+                              -{itemDiscPct}%
+                            </span>
+                          </div>
+                        )}
+                      </td>
                     )}
-                  </td>
-                </tr>
-              ))}
+                    {!isEB && (
+                      <td className="fw-600 text-accent">
+                        ₹{((Number(item.qty) || 0) * itemUnitPrice).toLocaleString('en-IN')}
+                        {hasDiscount && (
+                          <div style={{ fontSize: '0.7rem', color: '#16a34a', fontWeight: 600, marginTop: 2 }}>
+                            Save ₹{(itemDiscAmt * (Number(item.qty) || 0)).toLocaleString('en-IN')}
+                          </div>
+                        )}
+                      </td>
+                    )}
+                    <td>
+                      {isEB ? (
+                        <span className="badge badge-success">✅ Credited {item.qty} empty bottles to Godown</span>
+                      ) : (
+                        item.emptyCollected
+                          ? <span className="badge badge-success">✅ Collected {item.emptyCount !== undefined ? item.emptyCount : item.qty} empty</span>
+                          : <span className="badge badge-muted">Not Collected</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -276,6 +311,32 @@ export default function InvoiceDetail() {
             </div>
           ) : (
             <div className="totals-box">
+              {/* Total Savings from customer discount */}
+              {(() => {
+                const totalSavings = invoice.items.reduce((sum, item) => {
+                  const mkt = Number(item.marketPrice) || (invoice.marketPricesSnapshot ? Number(invoice.marketPricesSnapshot[item.cylinderType]) : 0) || 0;
+                  const cp = Number(item.unitPrice) || 0;
+                  const qty = Number(item.qty) || 0;
+                  return sum + Math.max(0, (mkt - cp) * qty);
+                }, 0);
+                if (totalSavings > 0) {
+                  return (
+                    <div className="total-row" style={{
+                      color: '#16a34a',
+                      background: 'rgba(34,197,94,0.06)',
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      marginBottom: 6,
+                    }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        🏷️ Customer Discount Savings
+                      </span>
+                      <span style={{ fontWeight: 700 }}>₹{totalSavings.toLocaleString('en-IN')}</span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               <div className="total-row grand">
                 <span>Total Amount</span>
                 <span>₹{invoice.totalAmount.toLocaleString('en-IN')}</span>

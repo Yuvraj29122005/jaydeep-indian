@@ -181,10 +181,39 @@ export default function CreateInvoice() {
           setItems([blankItem(true)]);
         }
       } else {
-        setItems([blankItem(false)]);
+        const defaultMkt = Number(marketPrices?.['19kg']) || 0;
+        const defaultCustPrice = selectedCustomer && selectedCustomer.prices?.['19kg'] !== undefined && Number(selectedCustomer.prices['19kg']) > 0
+          ? Number(selectedCustomer.prices['19kg'])
+          : defaultMkt;
+        const item = blankItem(false);
+        item.unitPrice = defaultCustPrice;
+        setItems([item]);
       }
     }
   };
+
+  // Auto-populate default item unitPrice from market prices or customer discount when available
+  useEffect(() => {
+    if (!isEditing && invoiceType === 'Standard') {
+      setItems(prev => {
+        let modified = false;
+        const updated = prev.map(item => {
+          if (item.unitPrice === 0 || item.unitPrice === '' || item.unitPrice === undefined) {
+            const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
+            const custPrice = selectedCustomer && selectedCustomer.prices?.[item.cylinderType] !== undefined && Number(selectedCustomer.prices[item.cylinderType]) > 0
+              ? Number(selectedCustomer.prices[item.cylinderType])
+              : mkt;
+            if (custPrice > 0) {
+              modified = true;
+              return { ...item, unitPrice: custPrice };
+            }
+          }
+          return item;
+        });
+        return modified ? updated : prev;
+      });
+    }
+  }, [marketPrices, selectedCustomer, isEditing, invoiceType]);
 
   const autoFillPendingBottles = (cust) => {
     const customerObj = cust || selectedCustomer;
@@ -240,9 +269,9 @@ export default function CreateInvoice() {
     setItems(prev => {
       const updated = [...prev];
       updated[idx] = { ...updated[idx], [field]: val };
-      if (field === 'cylinderType' && selectedCustomer && invoiceType === 'Standard') {
+      if (field === 'cylinderType' && invoiceType === 'Standard') {
         const mkt = Number(marketPrices?.[val]) || 0;
-        const custPrice = selectedCustomer.prices?.[val] !== undefined && Number(selectedCustomer.prices[val]) > 0
+        const custPrice = selectedCustomer && selectedCustomer.prices?.[val] !== undefined && Number(selectedCustomer.prices[val]) > 0
           ? Number(selectedCustomer.prices[val])
           : mkt;
         updated[idx].unitPrice = custPrice;
@@ -275,9 +304,9 @@ export default function CreateInvoice() {
   const addItem = () => {
     const isEB = invoiceType === 'Empty Bottle';
     const newItem = blankItem(isEB);
-    if (selectedCustomer && !isEB) {
+    if (!isEB) {
       const mkt = Number(marketPrices?.[newItem.cylinderType]) || 0;
-      const custPrice = selectedCustomer.prices?.[newItem.cylinderType] !== undefined && Number(selectedCustomer.prices[newItem.cylinderType]) > 0
+      const custPrice = selectedCustomer && selectedCustomer.prices?.[newItem.cylinderType] !== undefined && Number(selectedCustomer.prices[newItem.cylinderType]) > 0
         ? Number(selectedCustomer.prices[newItem.cylinderType])
         : mkt;
       newItem.unitPrice = custPrice;
@@ -371,13 +400,22 @@ export default function CreateInvoice() {
       customerName: selectedCustomer ? selectedCustomer.name : manualCustomerName.trim(),
       customerPhone: selectedCustomer ? selectedCustomer.phone : '',
       customerAddress: selectedCustomer ? (selectedCustomer.address || '') : '',
+      // Save a snapshot of market prices at invoice creation time for historical tracking
+      marketPricesSnapshot: { ...marketPrices },
       items: items.map(item => {
         const itemQty = Number(item.qty) || 1;
+        const itemUnitPrice = isEB ? 0 : (Number(item.unitPrice) || 0);
+        const itemMarketPrice = Number(marketPrices?.[item.cylinderType]) || 0;
+        const itemDiscountAmt = Math.max(0, itemMarketPrice - itemUnitPrice);
+        const itemDiscountPct = itemMarketPrice > 0 ? Number(((itemDiscountAmt / itemMarketPrice) * 100).toFixed(1)) : 0;
         return {
           ...item,
           cylinderType: item.cylinderType,
           qty: itemQty,
-          unitPrice: isEB ? 0 : (Number(item.unitPrice) || 0),
+          unitPrice: itemUnitPrice,
+          marketPrice: itemMarketPrice,
+          discountAmount: isEB ? 0 : itemDiscountAmt,
+          discountPercent: isEB ? 0 : itemDiscountPct,
           emptyCollected: item.isNC ? false : (isEB ? true : Boolean(item.emptyCollected)),
           emptyCount: item.isNC ? 0 : (isEB ? itemQty : (Boolean(item.emptyCollected) ? (Number(item.emptyCount) || itemQty) : 0)),
           itemType: isEB ? 'empty' : 'filled',
@@ -909,8 +947,13 @@ export default function CreateInvoice() {
                         placeholder="Count"
                       />
                       {invoiceType === 'Standard' && (
-                        <div style={{ fontSize: '0.7rem', color: stockInfo.filledCount < item.qty ? 'var(--danger)' : 'var(--text-muted)', marginTop: 2 }}>
-                          Stock: {stockInfo.filledCount}
+                        <div style={{
+                          fontSize: '0.7rem',
+                          color: stockInfo.filledCount < (Number(item.qty) || 0) ? 'var(--danger)' : '#16a34a',
+                          fontWeight: 600,
+                          marginTop: 2
+                        }}>
+                          Warehouse Stock: {stockInfo.filledCount} filled
                         </div>
                       )}
                       {errors[`qty_${idx}`] && <div style={{ fontSize: '0.7rem', color: 'var(--danger)' }}>{errors[`qty_${idx}`]}</div>}
@@ -940,15 +983,14 @@ export default function CreateInvoice() {
                             placeholder="₹0"
                             style={{
                               borderColor: (() => {
-                                if (!selectedCustomer) return undefined;
                                 const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
                                 const cp = Number(item.unitPrice) || 0;
-                                return mkt > 0 && cp < mkt ? 'rgba(34,197,94,0.5)' : undefined;
+                                return mkt > 0 && cp < mkt ? 'rgba(34,197,94,0.6)' : undefined;
                               })()
                             }}
                           />
                           {/* Discount indicator below price */}
-                          {selectedCustomer && (() => {
+                          {(() => {
                             const mkt = Number(marketPrices?.[item.cylinderType]) || 0;
                             const cp = Number(item.unitPrice) || 0;
                             const discAmt = mkt - cp;
@@ -961,18 +1003,24 @@ export default function CreateInvoice() {
                                   <span style={{
                                     fontSize: '0.62rem', color: 'var(--text-muted)',
                                     textDecoration: 'line-through'
-                                  }}>₹{mkt}</span>
+                                  }}>MRP ₹{mkt}</span>
                                   <span style={{
                                     fontSize: '0.58rem', fontWeight: 700, color: '#16a34a',
                                     background: 'rgba(34,197,94,0.1)', padding: '0px 4px',
                                     borderRadius: 8, lineHeight: '14px'
-                                  }}>-{discPct}%</span>
+                                  }}>-{discPct}% (Save ₹{discAmt})</span>
                                 </div>
                               );
                             } else if (mkt > 0 && cp === mkt) {
                               return (
                                 <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
                                   MRP ₹{mkt}
+                                </div>
+                              );
+                            } else if (mkt > 0 && cp > mkt) {
+                              return (
+                                <div style={{ fontSize: '0.62rem', color: '#eab308', marginTop: 2 }}>
+                                  Above MRP ₹{mkt}
                                 </div>
                               );
                             }

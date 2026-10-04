@@ -22,7 +22,7 @@ export default function Expenses() {
 
   // Filter logic
   const filtered = expenses.filter(e => {
-    const matchSearch = e.description.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = (e.description || '').toLowerCase().includes((search || '').toLowerCase());
     const matchType = filterType === 'All' || e.type === filterType;
     return matchSearch && matchType;
   });
