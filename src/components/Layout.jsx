@@ -2,10 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import InstallAppBanner, { promptAppInstall } from './InstallAppBanner';
+import SwitchAgencyModal from './SwitchAgencyModal';
 import { useApp } from '../context/AppContext';
 
 export default function Layout() {
-  const { currentUser, agencySettings } = useApp();
+  const {
+    currentUser,
+    agencySettings,
+    currentAgency,
+    activeAgencyInfo,
+    openAgencySwitchModal,
+  } = useApp();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
@@ -70,7 +77,7 @@ export default function Layout() {
     if (p.includes('/notes')) return 'Personal Notes';
     if (p.includes('/settings')) return 'Agency Settings';
     if (p.includes('/users')) return 'User Accounts';
-    return 'Jaydeep Gas';
+    return (currentAgency === 'aegis' ? 'Aegis Gas' : 'Jaydeep Gas');
   };
 
   const roleBadge = (role) => {
@@ -83,6 +90,9 @@ export default function Layout() {
     <div className={`app-layout ${collapsed ? 'sidebar-is-collapsed' : ''} ${mobileMenuOpen ? 'mobile-nav-active' : ''}`}>
       {/* Global Quick PWA Install Banner */}
       <InstallAppBanner />
+
+      {/* Global Agency Profile Switch Modal (Protected by Password 2323) */}
+      <SwitchAgencyModal />
 
       {/* Mobile Top App Bar (Visible on <= 900px) */}
       <header className="mobile-top-bar">
@@ -100,13 +110,25 @@ export default function Layout() {
 
         <div className="mobile-top-bar-center">
           <div className="mobile-brand-title">
-            <span className="mobile-brand-flame">🔥</span>
-            <span className="mobile-brand-name">{agencySettings?.agencyName?.split(' ')[0] || 'JAYDEEP'}</span>
+            <span className="mobile-brand-flame">{activeAgencyInfo?.icon || '🔥'}</span>
+            <span className="mobile-brand-name">{agencySettings?.agencyName?.split(' ')[0] || (currentAgency === 'aegis' ? 'AEGIS' : 'JAYDEEP')}</span>
           </div>
           <div className="mobile-page-title">{getPageTitle()}</div>
         </div>
 
         <div className="mobile-top-bar-right">
+          {/* Quick Agency Switcher Button */}
+          <button
+            type="button"
+            className="mobile-agency-switch-btn"
+            onClick={() => openAgencySwitchModal()}
+            title={`Active: ${activeAgencyInfo?.name} • Tap to switch agency`}
+          >
+            <span className="mobile-agency-badge-pill" style={{ background: currentAgency === 'aegis' ? '#0284c7' : '#ea580c' }}>
+              {activeAgencyInfo?.icon} ⇄
+            </span>
+          </button>
+
           {currentUser && roleBadge(currentUser.role)}
           <button
             type="button"

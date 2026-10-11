@@ -1,18 +1,63 @@
 import { supabase } from './supabase';
-import { CYLINDER_TYPES, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS } from './constants';
+import { CYLINDER_TYPES, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS, DEFAULT_AGENCY_PROFILES, AGENCIES } from './constants';
 
-// ==================== MARKET PRICES ====================
+// ==================== MULTI-AGENCY LOCAL CACHE KEYS ====================
 
 const LOCAL_MARKET_KEY = 'jig_market_prices';
 const LOCAL_MARKET_META_KEY = 'jig_market_prices_meta';
+const LOCAL_AGENCY_SETTINGS_KEY = 'jig_agency_settings';
+const LOCAL_STOCK_KEY = 'jig_stock_cache';
+const LOCAL_NOTES_KEY = 'jig_personal_notes';
 
-export async function fetchMarketPrices() {
+export function getMarketKey(agencyId = 'jaydeep') {
+  return `jig_market_prices_${agencyId}`;
+}
+
+export function getMarketMetaKey(agencyId = 'jaydeep') {
+  return `jig_market_prices_meta_${agencyId}`;
+}
+
+export function getAgencySettingsKey(agencyId = 'jaydeep') {
+  return `jig_agency_settings_${agencyId}`;
+}
+
+export function getStockKey(agencyId = 'jaydeep') {
+  return `jig_stock_cache_${agencyId}`;
+}
+
+export function getNotesKey(agencyId = 'jaydeep') {
+  return `jig_personal_notes_${agencyId}`;
+}
+
+// ==================== MARKET PRICES ====================
+
+export async function fetchMarketPrices(agencyId = 'jaydeep') {
+  const localKey = getMarketKey(agencyId);
+  const localMetaKey = getMarketMetaKey(agencyId);
+
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('market_prices')
       .select('*')
+      .eq('agency_id', agencyId)
       .order('updated_at', { ascending: false })
       .limit(1);
+
+    // Fallback if agency_id column doesn't exist yet in Supabase
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      if (agencyId === 'jaydeep') {
+        const fallback = await supabase
+          .from('market_prices')
+          .select('*')
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        data = fallback.data;
+        error = fallback.error;
+      } else {
+        data = [];
+        error = null;
+      }
+    }
 
     if (!error && data && data.length > 0) {
       const row = data[0];
@@ -22,19 +67,23 @@ export async function fetchMarketPrices() {
         updatedBy: row.updated_by || 'Admin'
       };
       try {
-        localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
-        localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify(meta));
+        localStorage.setItem(localKey, JSON.stringify(prices));
+        localStorage.setItem(localMetaKey, JSON.stringify(meta));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
+          localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify(meta));
+        }
       } catch (_e) {}
       return { prices, meta };
     }
   } catch (err) {
-    console.warn('Supabase fetchMarketPrices error, falling back:', err);
+    console.warn(`Supabase fetchMarketPrices error for ${agencyId}, falling back:`, err);
   }
 
   // Fallback to localStorage or defaults
   try {
-    const saved = localStorage.getItem(LOCAL_MARKET_KEY);
-    const savedMeta = localStorage.getItem(LOCAL_MARKET_META_KEY);
+    const saved = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_MARKET_KEY) : null);
+    const savedMeta = localStorage.getItem(localMetaKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_MARKET_META_KEY) : null);
     if (saved) {
       return {
         prices: JSON.parse(saved),
@@ -51,23 +100,40 @@ export async function fetchMarketPrices() {
   };
 }
 
-export async function saveMarketPrices(prices, updatedBy = 'Admin') {
+export async function saveMarketPrices(prices, updatedBy = 'Admin', agencyId = 'jaydeep') {
   const timestamp = new Date().toISOString();
+  const localKey = getMarketKey(agencyId);
+  const localMetaKey = getMarketMetaKey(agencyId);
+
   try {
-    localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
-    localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify({ updatedAt: timestamp, updatedBy }));
+    localStorage.setItem(localKey, JSON.stringify(prices));
+    localStorage.setItem(localMetaKey, JSON.stringify({ updatedAt: timestamp, updatedBy }));
+    if (agencyId === 'jaydeep') {
+      localStorage.setItem(LOCAL_MARKET_KEY, JSON.stringify(prices));
+      localStorage.setItem(LOCAL_MARKET_META_KEY, JSON.stringify({ updatedAt: timestamp, updatedBy }));
+    }
   } catch (_e) {}
 
   try {
-    const { data, error } = await supabase
+    const payload = {
+      prices,
+      updated_at: timestamp,
+      updated_by: updatedBy,
+      agency_id: agencyId
+    };
+
+    let { data, error } = await supabase
       .from('market_prices')
-      .insert({
-        prices,
-        updated_at: timestamp,
-        updated_by: updatedBy
-      })
+      .insert(payload)
       .select()
       .single();
+
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      delete payload.agency_id;
+      const fb = await supabase.from('market_prices').insert(payload).select().single();
+      data = fb.data;
+      error = fb.error;
+    }
 
     if (error) {
       console.warn('Supabase market_prices table insert error (run migration SQL):', error.message);
@@ -84,98 +150,122 @@ export async function saveMarketPrices(prices, updatedBy = 'Admin') {
 
 // ==================== AGENCY SETTINGS & CONFIG ====================
 
-const LOCAL_AGENCY_SETTINGS_KEY = 'jig_agency_settings';
-
-export function mapAgencySettingsFromDB(row) {
-  if (!row) return DEFAULT_AGENCY_SETTINGS;
+export function mapAgencySettingsFromDB(row, agencyId = 'jaydeep') {
+  const defaultProfile = DEFAULT_AGENCY_PROFILES[agencyId] || DEFAULT_AGENCY_SETTINGS;
+  if (!row) return defaultProfile;
   return {
     id: row.id,
-    agencyName: row.agency_name || DEFAULT_AGENCY_SETTINGS.agencyName,
-    companyName: row.company_name || row.agency_name || DEFAULT_AGENCY_SETTINGS.companyName,
-    tagline: row.tagline !== undefined ? row.tagline : DEFAULT_AGENCY_SETTINGS.tagline,
-    gstin: row.gstin !== undefined ? row.gstin : DEFAULT_AGENCY_SETTINGS.gstin,
-    panNumber: row.pan_number !== undefined ? row.pan_number : DEFAULT_AGENCY_SETTINGS.panNumber,
-    phone: row.phone !== undefined ? row.phone : DEFAULT_AGENCY_SETTINGS.phone,
-    alternatePhone: row.alternate_phone !== undefined ? row.alternate_phone : DEFAULT_AGENCY_SETTINGS.alternatePhone,
-    email: row.email !== undefined ? row.email : DEFAULT_AGENCY_SETTINGS.email,
-    website: row.website !== undefined ? row.website : DEFAULT_AGENCY_SETTINGS.website,
-    address: row.address !== undefined ? row.address : DEFAULT_AGENCY_SETTINGS.address,
-    city: row.city !== undefined ? row.city : DEFAULT_AGENCY_SETTINGS.city,
-    state: row.state !== undefined ? row.state : DEFAULT_AGENCY_SETTINGS.state,
-    pincode: row.pincode !== undefined ? row.pincode : DEFAULT_AGENCY_SETTINGS.pincode,
-    bankName: row.bank_name !== undefined ? row.bank_name : DEFAULT_AGENCY_SETTINGS.bankName,
-    accountHolder: row.account_holder !== undefined ? row.account_holder : DEFAULT_AGENCY_SETTINGS.accountHolder,
-    accountNumber: row.account_number !== undefined ? row.account_number : DEFAULT_AGENCY_SETTINGS.accountNumber,
-    ifscCode: row.ifsc_code !== undefined ? row.ifsc_code : DEFAULT_AGENCY_SETTINGS.ifscCode,
-    branch: row.branch !== undefined ? row.branch : DEFAULT_AGENCY_SETTINGS.branch,
-    upiId: row.upi_id !== undefined ? row.upi_id : DEFAULT_AGENCY_SETTINGS.upiId,
-    invoicePrefix: row.invoice_prefix || DEFAULT_AGENCY_SETTINGS.invoicePrefix,
-    emptyBottlePrefix: row.empty_bottle_prefix || DEFAULT_AGENCY_SETTINGS.emptyBottlePrefix,
-    invoiceTerms: row.invoice_terms !== undefined ? row.invoice_terms : DEFAULT_AGENCY_SETTINGS.invoiceTerms,
-    invoiceFooterNote: row.invoice_footer_note !== undefined ? row.invoice_footer_note : DEFAULT_AGENCY_SETTINGS.invoiceFooterNote,
-    signatoryTitle: row.signatory_title !== undefined ? row.signatory_title : DEFAULT_AGENCY_SETTINGS.signatoryTitle,
+    agencyId: row.agency_id || agencyId,
+    agencyName: row.agency_name || defaultProfile.agencyName,
+    companyName: row.company_name || row.agency_name || defaultProfile.companyName,
+    tagline: row.tagline !== undefined ? row.tagline : defaultProfile.tagline,
+    gstin: row.gstin !== undefined ? row.gstin : defaultProfile.gstin,
+    panNumber: row.pan_number !== undefined ? row.pan_number : defaultProfile.panNumber,
+    phone: row.phone !== undefined ? row.phone : defaultProfile.phone,
+    alternatePhone: row.alternate_phone !== undefined ? row.alternate_phone : defaultProfile.alternatePhone,
+    email: row.email !== undefined ? row.email : defaultProfile.email,
+    website: row.website !== undefined ? row.website : defaultProfile.website,
+    address: row.address !== undefined ? row.address : defaultProfile.address,
+    city: row.city !== undefined ? row.city : defaultProfile.city,
+    state: row.state !== undefined ? row.state : defaultProfile.state,
+    pincode: row.pincode !== undefined ? row.pincode : defaultProfile.pincode,
+    bankName: row.bank_name !== undefined ? row.bank_name : defaultProfile.bankName,
+    accountHolder: row.account_holder !== undefined ? row.account_holder : defaultProfile.accountHolder,
+    accountNumber: row.account_number !== undefined ? row.account_number : defaultProfile.accountNumber,
+    ifscCode: row.ifsc_code !== undefined ? row.ifsc_code : defaultProfile.ifscCode,
+    branch: row.branch !== undefined ? row.branch : defaultProfile.branch,
+    upiId: row.upi_id !== undefined ? row.upi_id : defaultProfile.upiId,
+    invoicePrefix: row.invoice_prefix || defaultProfile.invoicePrefix,
+    emptyBottlePrefix: row.empty_bottle_prefix || defaultProfile.emptyBottlePrefix,
+    invoiceTerms: row.invoice_terms !== undefined ? row.invoice_terms : defaultProfile.invoiceTerms,
+    invoiceFooterNote: row.invoice_footer_note !== undefined ? row.invoice_footer_note : defaultProfile.invoiceFooterNote,
+    signatoryTitle: row.signatory_title !== undefined ? row.signatory_title : defaultProfile.signatoryTitle,
     updatedAt: row.updated_at || null,
     updatedBy: row.updated_by || 'Admin'
   };
 }
 
 export function mapAgencySettingsToDB(settings, updatedBy = 'Admin') {
+  const defaultProfile = DEFAULT_AGENCY_PROFILES[settings?.agencyId] || DEFAULT_AGENCY_SETTINGS;
   return {
-    agency_name: settings.agencyName || DEFAULT_AGENCY_SETTINGS.agencyName,
-    company_name: settings.companyName || settings.agencyName || DEFAULT_AGENCY_SETTINGS.companyName,
-    tagline: settings.tagline !== undefined ? settings.tagline : DEFAULT_AGENCY_SETTINGS.tagline,
-    gstin: settings.gstin !== undefined ? settings.gstin : DEFAULT_AGENCY_SETTINGS.gstin,
-    pan_number: settings.panNumber !== undefined ? settings.panNumber : DEFAULT_AGENCY_SETTINGS.panNumber,
-    phone: settings.phone !== undefined ? settings.phone : DEFAULT_AGENCY_SETTINGS.phone,
-    alternate_phone: settings.alternatePhone !== undefined ? settings.alternatePhone : DEFAULT_AGENCY_SETTINGS.alternatePhone,
-    email: settings.email !== undefined ? settings.email : DEFAULT_AGENCY_SETTINGS.email,
-    website: settings.website !== undefined ? settings.website : DEFAULT_AGENCY_SETTINGS.website,
-    address: settings.address !== undefined ? settings.address : DEFAULT_AGENCY_SETTINGS.address,
-    city: settings.city !== undefined ? settings.city : DEFAULT_AGENCY_SETTINGS.city,
-    state: settings.state !== undefined ? settings.state : DEFAULT_AGENCY_SETTINGS.state,
-    pincode: settings.pincode !== undefined ? settings.pincode : DEFAULT_AGENCY_SETTINGS.pincode,
-    bank_name: settings.bankName !== undefined ? settings.bankName : DEFAULT_AGENCY_SETTINGS.bankName,
-    account_holder: settings.accountHolder !== undefined ? settings.accountHolder : DEFAULT_AGENCY_SETTINGS.accountHolder,
-    account_number: settings.accountNumber !== undefined ? settings.accountNumber : DEFAULT_AGENCY_SETTINGS.accountNumber,
-    ifsc_code: settings.ifscCode !== undefined ? settings.ifscCode : DEFAULT_AGENCY_SETTINGS.ifscCode,
-    branch: settings.branch !== undefined ? settings.branch : DEFAULT_AGENCY_SETTINGS.branch,
-    upi_id: settings.upiId !== undefined ? settings.upiId : DEFAULT_AGENCY_SETTINGS.upiId,
-    invoice_prefix: settings.invoicePrefix || DEFAULT_AGENCY_SETTINGS.invoicePrefix,
-    empty_bottle_prefix: settings.emptyBottlePrefix || DEFAULT_AGENCY_SETTINGS.emptyBottlePrefix,
-    invoice_terms: settings.invoiceTerms !== undefined ? settings.invoiceTerms : DEFAULT_AGENCY_SETTINGS.invoiceTerms,
-    invoice_footer_note: settings.invoiceFooterNote !== undefined ? settings.invoiceFooterNote : DEFAULT_AGENCY_SETTINGS.invoiceFooterNote,
-    signatory_title: settings.signatoryTitle !== undefined ? settings.signatoryTitle : DEFAULT_AGENCY_SETTINGS.signatoryTitle,
+    agency_name: settings.agencyName || defaultProfile.agencyName,
+    company_name: settings.companyName || settings.agencyName || defaultProfile.companyName,
+    tagline: settings.tagline !== undefined ? settings.tagline : defaultProfile.tagline,
+    gstin: settings.gstin !== undefined ? settings.gstin : defaultProfile.gstin,
+    pan_number: settings.panNumber !== undefined ? settings.panNumber : defaultProfile.panNumber,
+    phone: settings.phone !== undefined ? settings.phone : defaultProfile.phone,
+    alternate_phone: settings.alternatePhone !== undefined ? settings.alternatePhone : defaultProfile.alternatePhone,
+    email: settings.email !== undefined ? settings.email : defaultProfile.email,
+    website: settings.website !== undefined ? settings.website : defaultProfile.website,
+    address: settings.address !== undefined ? settings.address : defaultProfile.address,
+    city: settings.city !== undefined ? settings.city : defaultProfile.city,
+    state: settings.state !== undefined ? settings.state : defaultProfile.state,
+    pincode: settings.pincode !== undefined ? settings.pincode : defaultProfile.pincode,
+    bank_name: settings.bankName !== undefined ? settings.bankName : defaultProfile.bankName,
+    account_holder: settings.accountHolder !== undefined ? settings.accountHolder : defaultProfile.accountHolder,
+    account_number: settings.accountNumber !== undefined ? settings.accountNumber : defaultProfile.accountNumber,
+    ifsc_code: settings.ifscCode !== undefined ? settings.ifscCode : defaultProfile.ifscCode,
+    branch: settings.branch !== undefined ? settings.branch : defaultProfile.branch,
+    upi_id: settings.upiId !== undefined ? settings.upiId : defaultProfile.upiId,
+    invoice_prefix: settings.invoicePrefix || defaultProfile.invoicePrefix,
+    empty_bottle_prefix: settings.emptyBottlePrefix || defaultProfile.emptyBottlePrefix,
+    invoice_terms: settings.invoiceTerms !== undefined ? settings.invoiceTerms : defaultProfile.invoiceTerms,
+    invoice_footer_note: settings.invoiceFooterNote !== undefined ? settings.invoiceFooterNote : defaultProfile.invoiceFooterNote,
+    signatory_title: settings.signatoryTitle !== undefined ? settings.signatoryTitle : defaultProfile.signatoryTitle,
     updated_at: new Date().toISOString(),
     updated_by: updatedBy
   };
 }
 
-export async function fetchAgencySettings() {
+export async function fetchAgencySettings(agencyId = 'jaydeep') {
+  const defaultProfile = DEFAULT_AGENCY_PROFILES[agencyId] || DEFAULT_AGENCY_SETTINGS;
+  const localKey = getAgencySettingsKey(agencyId);
+
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('agency_settings')
       .select('*')
+      .eq('agency_id', agencyId)
       .order('updated_at', { ascending: false })
       .limit(1);
 
+    // Fallback if agency_id column doesn't exist yet in Supabase
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      if (agencyId === 'jaydeep') {
+        const fallback = await supabase
+          .from('agency_settings')
+          .select('*')
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        data = fallback.data;
+        error = fallback.error;
+      } else {
+        data = [];
+        error = null;
+      }
+    }
+
     if (!error && data && data.length > 0) {
-      const settings = mapAgencySettingsFromDB(data[0]);
+      const settings = mapAgencySettingsFromDB(data[0], agencyId);
       try {
-        localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.setItem(localKey, JSON.stringify(settings));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(settings));
+        }
       } catch (_e) {}
       return { settings, syncedWithSupabase: true };
     }
   } catch (err) {
-    console.warn('Supabase fetchAgencySettings error, falling back:', err);
+    console.warn(`Supabase fetchAgencySettings error for ${agencyId}, falling back:`, err);
   }
 
   // Fallback to localStorage or defaults
   try {
-    const saved = localStorage.getItem(LOCAL_AGENCY_SETTINGS_KEY);
+    const saved = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_AGENCY_SETTINGS_KEY) : null);
     if (saved) {
       const parsed = JSON.parse(saved);
       return {
-        settings: { ...DEFAULT_AGENCY_SETTINGS, ...parsed },
+        settings: { ...defaultProfile, ...parsed, agencyId },
         syncedWithSupabase: false
       };
     }
@@ -184,36 +274,51 @@ export async function fetchAgencySettings() {
   }
 
   return {
-    settings: { ...DEFAULT_AGENCY_SETTINGS },
+    settings: { ...defaultProfile, agencyId },
     syncedWithSupabase: false
   };
 }
 
-export async function saveAgencySettings(settings, updatedBy = 'Admin') {
+export async function saveAgencySettings(settings, updatedBy = 'Admin', agencyId = 'jaydeep') {
+  const resolvedAgencyId = settings?.agencyId || agencyId;
+  const defaultProfile = DEFAULT_AGENCY_PROFILES[resolvedAgencyId] || DEFAULT_AGENCY_SETTINGS;
   const timestamp = new Date().toISOString();
   const mergedSettings = {
-    ...DEFAULT_AGENCY_SETTINGS,
+    ...defaultProfile,
     ...settings,
+    agencyId: resolvedAgencyId,
     updatedAt: timestamp,
     updatedBy
   };
+  const localKey = getAgencySettingsKey(resolvedAgencyId);
 
   // Always save locally immediately
   try {
-    localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(mergedSettings));
+    localStorage.setItem(localKey, JSON.stringify(mergedSettings));
+    if (resolvedAgencyId === 'jaydeep') {
+      localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(mergedSettings));
+    }
   } catch (_e) {}
 
   // Attempt database sync
   try {
     const dbPayload = mapAgencySettingsToDB(mergedSettings, updatedBy);
+    dbPayload.agency_id = resolvedAgencyId;
 
-    const { data: existingRows, error: selectErr } = await supabase
+    let { data: existingRows, error: selectErr } = await supabase
       .from('agency_settings')
       .select('id')
+      .eq('agency_id', resolvedAgencyId)
       .limit(1);
 
-    if (selectErr) {
-      throw selectErr;
+    if (selectErr && (selectErr.message?.includes('agency_id') || selectErr.code === '42703')) {
+      if (resolvedAgencyId === 'jaydeep') {
+        const fb = await supabase.from('agency_settings').select('id').limit(1);
+        existingRows = fb.data;
+        delete dbPayload.agency_id;
+      } else {
+        throw new Error('Please run the Supabase multi-agency migration SQL to enable Aegis Gas Agency cloud database sync.');
+      }
     }
 
     let savedData = null;
@@ -236,9 +341,12 @@ export async function saveAgencySettings(settings, updatedBy = 'Admin') {
       savedData = data;
     }
 
-    const finalSettings = mapAgencySettingsFromDB(savedData);
+    const finalSettings = mapAgencySettingsFromDB(savedData, resolvedAgencyId);
     try {
-      localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(finalSettings));
+      localStorage.setItem(localKey, JSON.stringify(finalSettings));
+      if (resolvedAgencyId === 'jaydeep') {
+        localStorage.setItem(LOCAL_AGENCY_SETTINGS_KEY, JSON.stringify(finalSettings));
+      }
     } catch (_e) {}
 
     return {
@@ -257,24 +365,48 @@ export async function saveAgencySettings(settings, updatedBy = 'Admin') {
 
 // ==================== CUSTOMERS ====================
 
-export async function fetchCustomers() {
-  const { data, error } = await supabase
+export async function fetchCustomers(agencyId = 'jaydeep') {
+  let { data, error } = await supabase
     .from('customers')
     .select('*')
+    .eq('agency_id', agencyId)
     .order('created_at', { ascending: true });
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    if (agencyId === 'jaydeep') {
+      const fb = await supabase.from('customers').select('*').order('created_at', { ascending: true });
+      data = fb.data;
+      error = fb.error;
+    } else {
+      data = [];
+      error = null;
+    }
+  }
+
   if (error) throw error;
-  return data.map(mapCustomerFromDB);
+  return (data || []).map(row => mapCustomerFromDB(row, agencyId));
 }
 
-export async function insertCustomer(customer) {
-  const dbCustomer = mapCustomerToDB(customer);
-  const { data, error } = await supabase
+export async function insertCustomer(customer, agencyId = 'jaydeep') {
+  const resolvedAgencyId = customer.agencyId || agencyId;
+  const dbCustomer = mapCustomerToDB(customer, resolvedAgencyId);
+  dbCustomer.agency_id = resolvedAgencyId;
+
+  let { data, error } = await supabase
     .from('customers')
     .insert(dbCustomer)
     .select()
     .single();
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    delete dbCustomer.agency_id;
+    const fb = await supabase.from('customers').insert(dbCustomer).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
+
   if (error) throw error;
-  return mapCustomerFromDB(data);
+  return mapCustomerFromDB(data, resolvedAgencyId);
 }
 
 export async function patchCustomer(id, updates) {
@@ -435,7 +567,7 @@ export async function updateAllCustomersWithNewMarketPrices(newMarketPrices, cus
   return updatedCustomers;
 }
 
-function mapCustomerFromDB(row) {
+function mapCustomerFromDB(row, agencyId = 'jaydeep') {
   const bal = row.bottle_balance || {};
   const rawPrices = row.prices || {};
   const discounts = rawPrices.discounts || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
@@ -444,6 +576,7 @@ function mapCustomerFromDB(row) {
 
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     name: row.name || '',
     phone: row.phone || '',
     address: row.address || '',
@@ -471,7 +604,7 @@ function mapCustomerFromDB(row) {
   };
 }
 
-function mapCustomerToDB(customer) {
+function mapCustomerToDB(customer, agencyId = 'jaydeep') {
   const bal = customer.bottleBalance || {};
   const stock = customer.emptyBottleStock || {};
   const rawPrices = customer.prices || {};
@@ -480,6 +613,7 @@ function mapCustomerToDB(customer) {
   const ncBottles = customer.ncBottles || { '5kg': 0, '19kg': 0, '47.5kg': 0 };
 
   return {
+    agency_id: customer.agencyId || agencyId,
     name: customer.name,
     phone: customer.phone,
     address: customer.address || '',
@@ -502,23 +636,35 @@ function mapCustomerToDB(customer) {
 
 // ==================== STOCK ====================
 
-const LOCAL_STOCK_KEY = 'jig_stock_cache';
-
 const DEFAULT_INITIAL_STOCK = [
   { cylinderType: '5kg', filledCount: 50, emptyCount: 20 },
   { cylinderType: '19kg', filledCount: 150, emptyCount: 60 },
   { cylinderType: '47.5kg', filledCount: 40, emptyCount: 15 },
 ];
 
-export async function fetchStock() {
+export async function fetchStock(agencyId = 'jaydeep') {
+  const localKey = getStockKey(agencyId);
+
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('stock')
       .select('*')
+      .eq('agency_id', agencyId)
       .order('cylinder_type', { ascending: true });
 
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      if (agencyId === 'jaydeep') {
+        const fb = await supabase.from('stock').select('*').order('cylinder_type', { ascending: true });
+        data = fb.data;
+        error = fb.error;
+      } else {
+        data = [];
+        error = null;
+      }
+    }
+
     if (!error && data && data.length > 0) {
-      const stockList = data.map(mapStockFromDB);
+      const stockList = data.map(row => mapStockFromDB(row, agencyId));
       
       // Ensure all 3 varieties ('5kg', '19kg', '47.5kg') exist
       const existingTypes = new Set(stockList.map(s => s.cylinderType));
@@ -527,122 +673,156 @@ export async function fetchStock() {
           try {
             const { data: inserted } = await supabase
               .from('stock')
-              .insert({
+              .upsert({
+                agency_id: agencyId,
                 cylinder_type: def.cylinderType,
                 filled_count: def.filledCount,
                 empty_count: def.emptyCount,
-              })
+              }, { onConflict: 'agency_id,cylinder_type' })
               .select()
               .single();
-            if (inserted) stockList.push(mapStockFromDB(inserted));
+            if (inserted) stockList.push(mapStockFromDB(inserted, agencyId));
           } catch (_e) {
-            stockList.push({ id: `def-${def.cylinderType}`, ...def });
+            stockList.push({ id: `def-${agencyId}-${def.cylinderType}`, agencyId, ...def });
           }
         }
       }
 
       try {
-        localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(stockList));
+        localStorage.setItem(localKey, JSON.stringify(stockList));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(stockList));
+        }
       } catch (_e) {}
 
       return stockList;
     } else if (!error && (!data || data.length === 0)) {
-      // Table is empty in Supabase, seed default stock for all 3 varieties
+      // Table is empty for this agency in Supabase, seed default stock for all 3 varieties
       const seeded = [];
       for (const def of DEFAULT_INITIAL_STOCK) {
         try {
           const { data: ins } = await supabase
             .from('stock')
             .insert({
+              agency_id: agencyId,
               cylinder_type: def.cylinderType,
               filled_count: def.filledCount,
               empty_count: def.emptyCount,
             })
             .select()
             .single();
-          if (ins) seeded.push(mapStockFromDB(ins));
-          else seeded.push({ id: `def-${def.cylinderType}`, ...def });
+          if (ins) seeded.push(mapStockFromDB(ins, agencyId));
+          else seeded.push({ id: `def-${agencyId}-${def.cylinderType}`, agencyId, ...def });
         } catch (_e) {
-          seeded.push({ id: `def-${def.cylinderType}`, ...def });
+          seeded.push({ id: `def-${agencyId}-${def.cylinderType}`, agencyId, ...def });
         }
       }
 
       try {
-        localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(seeded));
+        localStorage.setItem(localKey, JSON.stringify(seeded));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(seeded));
+        }
       } catch (_e) {}
 
       return seeded;
     }
   } catch (err) {
-    console.warn('Supabase fetchStock error, reading from local cache:', err);
+    console.warn(`Supabase fetchStock error for ${agencyId}, reading from local cache:`, err);
   }
 
   // Fallback to localStorage or defaults
   try {
-    const saved = localStorage.getItem(LOCAL_STOCK_KEY);
+    const saved = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_STOCK_KEY) : null);
     if (saved) return JSON.parse(saved);
   } catch (_e) {}
 
-  return DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${idx}`, ...item }));
+  return DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${agencyId}-${idx}`, agencyId, ...item }));
 }
 
-export async function patchStock(cylinderType, updates) {
+export async function patchStock(cylinderType, updates, agencyId = 'jaydeep') {
+  const localKey = getStockKey(agencyId);
   const dbUpdates = {};
   if (updates.filledCount !== undefined) dbUpdates.filled_count = Number(updates.filledCount);
   if (updates.emptyCount !== undefined) dbUpdates.empty_count = Number(updates.emptyCount);
 
   // Update local cache immediately
   try {
-    const saved = localStorage.getItem(LOCAL_STOCK_KEY);
+    const saved = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_STOCK_KEY) : null);
     let stockArray = [];
     if (saved) {
       try { stockArray = JSON.parse(saved); } catch (_e) { stockArray = []; }
     }
     if (!Array.isArray(stockArray) || stockArray.length === 0) {
-      stockArray = DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${idx}`, ...item }));
+      stockArray = DEFAULT_INITIAL_STOCK.map((item, idx) => ({ id: `local-${agencyId}-${idx}`, agencyId, ...item }));
     }
     const exists = stockArray.some(s => s.cylinderType === cylinderType);
     const updated = exists
       ? stockArray.map(s => s.cylinderType === cylinderType ? { ...s, ...updates } : s)
-      : [...stockArray, { id: `local-${cylinderType}`, cylinderType, filledCount: updates.filledCount ?? 0, emptyCount: updates.emptyCount ?? 0 }];
-    localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(updated));
+      : [...stockArray, { id: `local-${agencyId}-${cylinderType}`, agencyId, cylinderType, filledCount: updates.filledCount ?? 0, emptyCount: updates.emptyCount ?? 0 }];
+    localStorage.setItem(localKey, JSON.stringify(updated));
+    if (agencyId === 'jaydeep') {
+      localStorage.setItem(LOCAL_STOCK_KEY, JSON.stringify(updated));
+    }
   } catch (_e) {}
 
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('stock')
       .update(dbUpdates)
       .eq('cylinder_type', cylinderType)
+      .eq('agency_id', agencyId)
       .select();
 
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      const fb = await supabase
+        .from('stock')
+        .update(dbUpdates)
+        .eq('cylinder_type', cylinderType)
+        .select();
+      data = fb.data;
+      error = fb.error;
+    }
+
     if (!error && data && data.length > 0) {
-      return mapStockFromDB(data[0]);
+      return mapStockFromDB(data[0], agencyId);
     }
 
     // If update returned 0 rows (row did not exist), upsert it!
-    const { data: upsertData, error: upsertErr } = await supabase
+    const upsertObj = {
+      cylinder_type: cylinderType,
+      filled_count: updates.filledCount !== undefined ? Number(updates.filledCount) : 0,
+      empty_count: updates.emptyCount !== undefined ? Number(updates.emptyCount) : 0,
+      agency_id: agencyId
+    };
+
+    let { data: upsertData, error: upsertErr } = await supabase
       .from('stock')
-      .upsert({
-        cylinder_type: cylinderType,
-        filled_count: updates.filledCount !== undefined ? Number(updates.filledCount) : 0,
-        empty_count: updates.emptyCount !== undefined ? Number(updates.emptyCount) : 0,
-      })
+      .upsert(upsertObj, { onConflict: 'agency_id,cylinder_type' })
       .select()
       .single();
 
+    if (upsertErr && (upsertErr.message?.includes('agency_id') || upsertErr.code === '42703')) {
+      delete upsertObj.agency_id;
+      const fbUpsert = await supabase.from('stock').upsert(upsertObj).select().single();
+      upsertData = fbUpsert.data;
+      upsertErr = fbUpsert.error;
+    }
+
     if (!upsertErr && upsertData) {
-      return mapStockFromDB(upsertData);
+      return mapStockFromDB(upsertData, agencyId);
     }
   } catch (err) {
-    console.warn('Supabase patchStock error, updated locally:', err);
+    console.warn(`Supabase patchStock error for ${agencyId}, updated locally:`, err);
   }
 
-  return { cylinderType, ...updates };
+  return { cylinderType, agencyId, ...updates };
 }
 
-function mapStockFromDB(row) {
+function mapStockFromDB(row, agencyId = 'jaydeep') {
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     cylinderType: row.cylinder_type,
     filledCount: Number(row.filled_count) || 0,
     emptyCount: Number(row.empty_count) || 0,
@@ -651,26 +831,49 @@ function mapStockFromDB(row) {
 
 // ==================== INVOICES ====================
 
-export async function fetchInvoices() {
-  const { data, error } = await supabase
+export async function fetchInvoices(agencyId = 'jaydeep') {
+  let { data, error } = await supabase
     .from('invoices')
     .select('*')
+    .eq('agency_id', agencyId)
     .order('created_at', { ascending: true });
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    if (agencyId === 'jaydeep') {
+      const fb = await supabase.from('invoices').select('*').order('created_at', { ascending: true });
+      data = fb.data;
+      error = fb.error;
+    } else {
+      data = [];
+      error = null;
+    }
+  }
+
   if (error) throw error;
-  return data.map(mapInvoiceFromDB);
+  return (data || []).map(row => mapInvoiceFromDB(row, agencyId));
 }
 
-export async function insertInvoice(invoice) {
-  const dbInvoice = mapInvoiceToDB(invoice);
-  const { data, error } = await supabase
+export async function insertInvoice(invoice, agencyId = 'jaydeep') {
+  const resolvedAgencyId = invoice.agencyId || agencyId;
+  const dbInvoice = mapInvoiceToDB(invoice, resolvedAgencyId);
+  dbInvoice.agency_id = resolvedAgencyId;
+
+  let { data, error } = await supabase
     .from('invoices')
     .insert(dbInvoice)
     .select()
     .single();
-  if (error) throw error;
-  return mapInvoiceFromDB(data);
-}
 
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    delete dbInvoice.agency_id;
+    const fb = await supabase.from('invoices').insert(dbInvoice).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
+
+  if (error) throw error;
+  return mapInvoiceFromDB(data, resolvedAgencyId);
+}
 
 export async function patchInvoice(id, updates) {
   const dbUpdates = {};
@@ -728,7 +931,7 @@ export async function removeInvoice(id) {
   if (error) throw error;
 }
 
-function mapInvoiceFromDB(row) {
+function mapInvoiceFromDB(row, agencyId = 'jaydeep') {
   const rawNotes = row.notes || '';
   const isEB = row.invoice_type === 'Empty Bottle' ||
                rawNotes.includes('[Type: Empty Bottle]') ||
@@ -738,6 +941,7 @@ function mapInvoiceFromDB(row) {
 
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     invoiceNumber: row.invoice_number,
     invoiceType: isEB ? 'Empty Bottle' : 'Standard',
     date: row.date,
@@ -758,7 +962,7 @@ function mapInvoiceFromDB(row) {
   };
 }
 
-function mapInvoiceToDB(invoice) {
+function mapInvoiceToDB(invoice, agencyId = 'jaydeep') {
   const isEB = invoice.invoiceType === 'Empty Bottle' || invoice.items?.some(i => i.itemType === 'empty' || i.isBottleOnly);
   let finalNotes = invoice.notes || '';
   if (isEB && !finalNotes.includes('[Type: Empty Bottle]')) {
@@ -774,6 +978,7 @@ function mapInvoiceToDB(invoice) {
   }));
 
   const dbObj = {
+    agency_id: invoice.agencyId || agencyId,
     invoice_number: invoice.invoiceNumber,
     invoice_type: isEB ? 'Empty Bottle' : 'Standard',
     date: invoice.date,
@@ -802,29 +1007,53 @@ function mapInvoiceToDB(invoice) {
 
 // ==================== EXPENSES ====================
 
-export async function fetchExpenses() {
-  const { data, error } = await supabase
+export async function fetchExpenses(agencyId = 'jaydeep') {
+  let { data, error } = await supabase
     .from('expenses')
     .select('*')
+    .eq('agency_id', agencyId)
     .order('created_at', { ascending: true });
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    if (agencyId === 'jaydeep') {
+      const fb = await supabase.from('expenses').select('*').order('created_at', { ascending: true });
+      data = fb.data;
+      error = fb.error;
+    } else {
+      data = [];
+      error = null;
+    }
+  }
+
   if (error) throw error;
-  return data.map(mapExpenseFromDB);
+  return (data || []).map(row => mapExpenseFromDB(row, agencyId));
 }
 
-export async function insertExpense(expense) {
+export async function insertExpense(expense, agencyId = 'jaydeep') {
+  const resolvedAgencyId = expense.agencyId || agencyId;
   const dbExpense = {
     date: expense.date,
     amount: expense.amount,
     type: expense.type,
     description: expense.description,
+    agency_id: resolvedAgencyId
   };
-  const { data, error } = await supabase
+
+  let { data, error } = await supabase
     .from('expenses')
     .insert(dbExpense)
     .select()
     .single();
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    delete dbExpense.agency_id;
+    const fb = await supabase.from('expenses').insert(dbExpense).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
+
   if (error) throw error;
-  return mapExpenseFromDB(data);
+  return mapExpenseFromDB(data, resolvedAgencyId);
 }
 
 export async function patchExpense(id, updates) {
@@ -846,9 +1075,10 @@ export async function removeExpense(id) {
   if (error) throw error;
 }
 
-function mapExpenseFromDB(row) {
+function mapExpenseFromDB(row, agencyId = 'jaydeep') {
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     date: row.date,
     amount: row.amount,
     type: row.type,
@@ -858,29 +1088,53 @@ function mapExpenseFromDB(row) {
 
 // ==================== REFILL TRIPS ====================
 
-export async function fetchRefillTrips() {
-  const { data, error } = await supabase
+export async function fetchRefillTrips(agencyId = 'jaydeep') {
+  let { data, error } = await supabase
     .from('refill_trips')
     .select('*')
+    .eq('agency_id', agencyId)
     .order('created_at', { ascending: false });
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    if (agencyId === 'jaydeep') {
+      const fb = await supabase.from('refill_trips').select('*').order('created_at', { ascending: false });
+      data = fb.data;
+      error = fb.error;
+    } else {
+      data = [];
+      error = null;
+    }
+  }
+
   if (error) throw error;
-  return data.map(mapRefillTripFromDB);
+  return (data || []).map(row => mapRefillTripFromDB(row, agencyId));
 }
 
-export async function insertRefillTrip(trip) {
+export async function insertRefillTrip(trip, agencyId = 'jaydeep') {
+  const resolvedAgencyId = trip.agencyId || agencyId;
   const dbTrip = {
     cylinder_type: trip.cylinderType,
     empty_sent_count: trip.emptySentCount,
     status: 'Sent',
     date_sent: new Date().toISOString(),
+    agency_id: resolvedAgencyId
   };
-  const { data, error } = await supabase
+
+  let { data, error } = await supabase
     .from('refill_trips')
     .insert(dbTrip)
     .select()
     .single();
+
+  if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+    delete dbTrip.agency_id;
+    const fb = await supabase.from('refill_trips').insert(dbTrip).select().single();
+    data = fb.data;
+    error = fb.error;
+  }
+
   if (error) throw error;
-  return mapRefillTripFromDB(data);
+  return mapRefillTripFromDB(data, resolvedAgencyId);
 }
 
 export async function patchRefillTrip(id, updates) {
@@ -926,9 +1180,10 @@ export async function removeRefillTrip(id) {
   }
 }
 
-function mapRefillTripFromDB(row) {
+function mapRefillTripFromDB(row, agencyId = 'jaydeep') {
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     cylinderType: row.cylinder_type,
     emptySentCount: row.empty_sent_count,
     filledReturnedCount: row.filled_returned_count,
@@ -940,29 +1195,44 @@ function mapRefillTripFromDB(row) {
 
 // ==================== PERSONAL NOTES ====================
 
-const LOCAL_NOTES_KEY = 'jig_personal_notes';
+export async function fetchNotes(agencyId = 'jaydeep') {
+  const localKey = getNotesKey(agencyId);
 
-export async function fetchNotes() {
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('personal_notes')
       .select('*')
+      .eq('agency_id', agencyId)
       .order('date', { ascending: false });
 
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      if (agencyId === 'jaydeep') {
+        const fb = await supabase.from('personal_notes').select('*').order('date', { ascending: false });
+        data = fb.data;
+        error = fb.error;
+      } else {
+        data = [];
+        error = null;
+      }
+    }
+
     if (!error && data) {
-      const notes = data.map(mapNoteFromDB);
+      const notes = data.map(row => mapNoteFromDB(row, agencyId));
       try {
-        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(notes));
+        localStorage.setItem(localKey, JSON.stringify(notes));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(notes));
+        }
       } catch (_e) {}
       return notes;
     }
   } catch (err) {
-    console.warn('Supabase fetchNotes error, falling back to local storage:', err);
+    console.warn(`Supabase fetchNotes error for ${agencyId}, reading from local cache:`, err);
   }
 
   // Fallback to localStorage
   try {
-    const saved = localStorage.getItem(LOCAL_NOTES_KEY);
+    const saved = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_NOTES_KEY) : null);
     if (saved) return JSON.parse(saved);
   } catch (e) {
     console.warn('LocalStorage notes read error:', e);
@@ -970,32 +1240,45 @@ export async function fetchNotes() {
   return [];
 }
 
-export async function insertNote(note) {
+export async function insertNote(note, agencyId = 'jaydeep') {
+  const resolvedAgencyId = note.agencyId || agencyId;
+  const localKey = getNotesKey(resolvedAgencyId);
   const dbNote = {
     date: note.date,
     title: note.title,
     content: note.content,
     attachments: note.attachments || [],
+    agency_id: resolvedAgencyId,
   };
 
   let localNotes = [];
   try {
-    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    const raw = localStorage.getItem(localKey) || (resolvedAgencyId === 'jaydeep' ? localStorage.getItem(LOCAL_NOTES_KEY) : null);
     if (raw) localNotes = JSON.parse(raw);
   } catch (_e) {}
 
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('personal_notes')
       .insert(dbNote)
       .select()
       .single();
 
+    if (error && (error.message?.includes('agency_id') || error.code === '42703')) {
+      delete dbNote.agency_id;
+      const fb = await supabase.from('personal_notes').insert(dbNote).select().single();
+      data = fb.data;
+      error = fb.error;
+    }
+
     if (!error && data) {
-      const created = mapNoteFromDB(data);
+      const created = mapNoteFromDB(data, resolvedAgencyId);
       localNotes = [created, ...localNotes.filter(n => n.id !== created.id)];
       try {
-        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+        localStorage.setItem(localKey, JSON.stringify(localNotes));
+        if (resolvedAgencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+        }
       } catch (_e) {}
       return created;
     }
@@ -1012,12 +1295,16 @@ export async function insertNote(note) {
   };
   localNotes = [createdLocal, ...localNotes];
   try {
-    localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+    localStorage.setItem(localKey, JSON.stringify(localNotes));
+    if (resolvedAgencyId === 'jaydeep') {
+      localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+    }
   } catch (_e) {}
   return createdLocal;
 }
 
-export async function patchNote(id, updates) {
+export async function patchNote(id, updates, agencyId = 'jaydeep') {
+  const localKey = getNotesKey(agencyId);
   const dbUpdates = {};
   if (updates.date !== undefined) dbUpdates.date = updates.date;
   if (updates.title !== undefined) dbUpdates.title = updates.title;
@@ -1027,7 +1314,7 @@ export async function patchNote(id, updates) {
 
   let localNotes = [];
   try {
-    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    const raw = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_NOTES_KEY) : null);
     if (raw) localNotes = JSON.parse(raw);
   } catch (_e) {}
 
@@ -1040,10 +1327,13 @@ export async function patchNote(id, updates) {
       .single();
 
     if (!error && data) {
-      const updated = mapNoteFromDB(data);
+      const updated = mapNoteFromDB(data, agencyId);
       localNotes = localNotes.map(n => n.id === id ? updated : n);
       try {
-        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+        localStorage.setItem(localKey, JSON.stringify(localNotes));
+        if (agencyId === 'jaydeep') {
+          localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+        }
       } catch (_e) {}
       return updated;
     }
@@ -1059,12 +1349,17 @@ export async function patchNote(id, updates) {
     return n;
   });
   try {
-    localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+    localStorage.setItem(localKey, JSON.stringify(localNotes));
+    if (agencyId === 'jaydeep') {
+      localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(localNotes));
+    }
   } catch (_e) {}
   return localNotes.find(n => n.id === id) || { id, ...updates };
 }
 
-export async function removeNote(id) {
+export async function removeNote(id, agencyId = 'jaydeep') {
+  const localKey = getNotesKey(agencyId);
+
   // First try cleanup from storage
   try {
     const { data: note } = await supabase
@@ -1088,17 +1383,21 @@ export async function removeNote(id) {
   }
 
   try {
-    const raw = localStorage.getItem(LOCAL_NOTES_KEY);
+    const raw = localStorage.getItem(localKey) || (agencyId === 'jaydeep' ? localStorage.getItem(LOCAL_NOTES_KEY) : null);
     if (raw) {
       const filtered = JSON.parse(raw).filter(n => n.id !== id);
-      localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(filtered));
+      localStorage.setItem(localKey, JSON.stringify(filtered));
+      if (agencyId === 'jaydeep') {
+        localStorage.setItem(LOCAL_NOTES_KEY, JSON.stringify(filtered));
+      }
     }
   } catch (_e) {}
 }
 
-function mapNoteFromDB(row) {
+function mapNoteFromDB(row, agencyId = 'jaydeep') {
   return {
     id: row.id,
+    agencyId: row.agency_id || agencyId,
     date: row.date,
     title: row.title || '',
     content: row.content || '',
@@ -1165,16 +1464,19 @@ export async function deleteNoteAttachment(storagePath) {
 
 // ==================== RESET ALL DATA ====================
 
-export async function resetAllData() {
-  // Delete all rows from every table that exists in database
+export async function resetAllData(agencyId = null) {
+  // Delete rows from every table that exists in database (scoped to agency if provided)
   const tables = ['invoices', 'expenses', 'refill_trips', 'personal_notes', 'customers'];
 
   for (const table of tables) {
     try {
-      const { error } = await supabase
-        .from(table)
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+      let query = supabase.from(table).delete();
+      if (agencyId) {
+        query = query.eq('agency_id', agencyId);
+      } else {
+        query = query.neq('id', '00000000-0000-0000-0000-000000000000');
+      }
+      const { error } = await query;
       if (error && error.code !== 'PGRST205') {
         console.warn(`Warning clearing ${table}:`, error.message);
       }
@@ -1185,7 +1487,9 @@ export async function resetAllData() {
 
   // Reset stock counts to 0 in Supabase
   try {
-    const { data: stockRows } = await supabase.from('stock').select('id');
+    let stockQuery = supabase.from('stock').select('id');
+    if (agencyId) stockQuery = stockQuery.eq('agency_id', agencyId);
+    const { data: stockRows } = await stockQuery;
     if (stockRows) {
       for (const row of stockRows) {
         await supabase
@@ -1198,24 +1502,40 @@ export async function resetAllData() {
     console.warn('Exception resetting stock in DB:', e);
   }
 
-  // Clean up all files from note-attachments storage bucket
-  try {
-    const { data: files } = await supabase.storage
-      .from('note-attachments')
-      .list('', { limit: 1000 });
-    if (files && files.length > 0) {
-      const paths = files.map(f => f.name);
-      await supabase.storage.from('note-attachments').remove(paths);
+  // Clean up all files from note-attachments storage bucket if global reset
+  if (!agencyId) {
+    try {
+      const { data: files } = await supabase.storage
+        .from('note-attachments')
+        .list('', { limit: 1000 });
+      if (files && files.length > 0) {
+        const paths = files.map(f => f.name);
+        await supabase.storage.from('note-attachments').remove(paths);
+      }
+    } catch (_e) {
+      console.warn('Could not clean storage:', _e);
     }
-  } catch (_e) {
-    console.warn('Could not clean storage:', _e);
   }
 
-  // Clean up all local storage data backups
+  // Clean up local storage data backups
   try {
-    localStorage.removeItem(LOCAL_NOTES_KEY);
-    localStorage.removeItem('jig_market_prices');
-    localStorage.removeItem('jig_market_prices_meta');
+    if (agencyId) {
+      localStorage.removeItem(getNotesKey(agencyId));
+      localStorage.removeItem(getMarketKey(agencyId));
+      localStorage.removeItem(getMarketMetaKey(agencyId));
+      localStorage.removeItem(getStockKey(agencyId));
+      if (agencyId === 'jaydeep') {
+        localStorage.removeItem(LOCAL_NOTES_KEY);
+        localStorage.removeItem('jig_market_prices');
+        localStorage.removeItem('jig_market_prices_meta');
+        localStorage.removeItem(LOCAL_STOCK_KEY);
+      }
+    } else {
+      localStorage.removeItem(LOCAL_NOTES_KEY);
+      localStorage.removeItem('jig_market_prices');
+      localStorage.removeItem('jig_market_prices_meta');
+      localStorage.removeItem(LOCAL_STOCK_KEY);
+    }
   } catch (_e) {}
 }
 

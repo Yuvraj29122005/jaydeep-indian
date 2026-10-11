@@ -16,7 +16,15 @@ const allNavItems = [
 ];
 
 export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }) {
-  const { logout, currentUser, hasModuleAccess, agencySettings } = useApp();
+  const {
+    logout,
+    currentUser,
+    hasModuleAccess,
+    agencySettings,
+    currentAgency,
+    activeAgencyInfo,
+    openAgencySwitchModal,
+  } = useApp();
   const navigate = useNavigate();
 
   // Collapsed sidebar state with localStorage persistence for desktop
@@ -79,19 +87,23 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <div style={{
               width: 38, height: 38,
-              background: 'linear-gradient(135deg, #f59e0b, #ea580c, #dc2626)',
+              background: activeAgencyInfo?.badgeColor || 'linear-gradient(135deg, #f59e0b, #ea580c, #dc2626)',
               borderRadius: 10,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '1.25rem', flexShrink: 0,
-              boxShadow: '0 4px 12px rgba(234, 88, 12, 0.35)'
-            }}>🔥</div>
+              boxShadow: currentAgency === 'aegis' 
+                ? '0 4px 12px rgba(2, 132, 199, 0.35)' 
+                : '0 4px 12px rgba(234, 88, 12, 0.35)'
+            }}>
+              {activeAgencyInfo?.icon || '🔥'}
+            </div>
             {(!collapsed || mobileOpen) && (
               <div style={{ minWidth: 0 }}>
                 <div className="sidebar-brand-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {agencySettings?.agencyName?.split(' ')[0] || 'JAYDEEP'}
+                  {agencySettings?.agencyName?.split(' ')[0] || (currentAgency === 'aegis' ? 'AEGIS' : 'JAYDEEP')}
                 </div>
                 <div className="sidebar-brand-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {agencySettings?.tagline || 'Indian Gas Agency'}
+                  {agencySettings?.tagline || (currentAgency === 'aegis' ? 'Aegis Gas Agency' : 'Indian Gas Agency')}
                 </div>
               </div>
             )}
@@ -138,6 +150,39 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile = () => {} }
           </button>
         )}
       </div>
+
+      {/* Agency Switcher Panel */}
+      {(!collapsed || mobileOpen) ? (
+        <div className="sidebar-agency-switcher-panel">
+          <div className="sidebar-agency-current-badge">
+            <span className="agency-live-pulsar" style={{ background: currentAgency === 'aegis' ? '#0284c7' : '#ea580c' }} />
+            <span className="agency-current-label">Panel: <strong>{activeAgencyInfo?.name?.split(' ')[0]} Gas</strong></span>
+          </div>
+          <button
+            type="button"
+            className="sidebar-switch-agency-pill-btn"
+            onClick={() => {
+              if (onCloseMobile) onCloseMobile();
+              openAgencySwitchModal();
+            }}
+            title="Switch Agency Profile"
+          >
+            <span className="switch-icon-symbol">⇄</span>
+            <span>Switch Profile</span>
+          </button>
+        </div>
+      ) : (
+        <div className="sidebar-agency-collapsed-panel">
+          <button
+            type="button"
+            className="sidebar-agency-collapsed-btn"
+            onClick={() => openAgencySwitchModal()}
+            title={`Active: ${activeAgencyInfo?.name}\nClick to Switch Profile`}
+          >
+            <span>⇄</span>
+          </button>
+        </div>
+      )}
 
       <nav className="sidebar-nav">
         {(!collapsed || mobileOpen) && <div className="nav-section-label">Main Menu</div>}

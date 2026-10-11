@@ -18,7 +18,10 @@ export default function Stock() {
     refreshStock, 
     getCylinderMetrics, 
     canEditModule, 
-    agencySettings 
+    agencySettings,
+    currentAgency,
+    activeAgencyInfo,
+    openAgencySwitchModal,
   } = useApp();
 
   const canEdit = canEditModule('stock');
@@ -31,7 +34,7 @@ export default function Stock() {
   const [submitting, setSubmitting] = useState(false);
   const [syncNotice, setSyncNotice] = useState(null);
 
-  // Automatic synchronization on mount, periodic interval, and window focus
+  // Automatic synchronization on mount, agency switch, periodic interval, and window focus
   useEffect(() => {
     let isMounted = true;
     
@@ -62,7 +65,7 @@ export default function Stock() {
       clearInterval(intervalId);
       window.removeEventListener('focus', onWindowFocus);
     };
-  }, []);
+  }, [currentAgency]);
 
   const handleFetchStock = async () => {
     setIsFetching(true);
@@ -164,12 +167,47 @@ export default function Stock() {
       {/* Page Header */}
       <div className="page-header" style={{ marginBottom: 24 }}>
         <div>
-          <h1 className="page-title">Cylinder Stock Management</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h1 className="page-title">Cylinder Stock Management</h1>
+            <span
+              className="badge"
+              style={{
+                background: currentAgency === 'aegis' ? '#0284c7' : '#ea580c',
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5
+              }}
+              title={`Active Godown: ${activeAgencyInfo?.name}`}
+            >
+              <span>{activeAgencyInfo?.icon}</span>
+              <span>{activeAgencyInfo?.name}</span>
+            </span>
+          </div>
           <p className="page-subtitle">
-            Live inventory of filled & empty cylinders in godown and network
+            Live inventory of filled & empty cylinders in <strong>{activeAgencyInfo?.name}</strong> warehouse
           </p>
         </div>
         <div className="btn-group" style={{ alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => openAgencySwitchModal()}
+            style={{
+              background: currentAgency === 'aegis'
+                ? 'linear-gradient(135deg, #0284c7, #0369a1)'
+                : 'linear-gradient(135deg, #ea580c, #c2410c)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6
+            }}
+            title="Switch between Jaydeep and Aegis warehouse inventory"
+          >
+            <span>⇄</span>
+            <span>Switch Agency</span>
+          </button>
           {syncNotice && (
             <span className="badge badge-success" style={{ alignSelf: 'center', padding: '6px 12px', fontSize: '0.85rem' }}>
               {syncNotice}

@@ -1,10 +1,44 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import * as db from '../lib/database';
-import { CYLINDER_TYPES, defaultBottleBalance, defaultEmptyStock, DEFAULT_MARKET_PRICES, DEFAULT_AGENCY_SETTINGS } from '../lib/constants';
+import {
+  CYLINDER_TYPES,
+  defaultBottleBalance,
+  defaultEmptyStock,
+  DEFAULT_MARKET_PRICES,
+  DEFAULT_AGENCY_SETTINGS,
+  DEFAULT_AGENCY_PROFILES,
+  AGENCIES,
+  AGENCY_SWITCH_PASSWORD
+} from '../lib/constants';
 
 const AppContext = createContext();
 
 export function AppProvider({ children }) {
+  // Current Active Agency Profile ('jaydeep' | 'aegis')
+  const [currentAgency, setCurrentAgency] = useState(() => {
+    try {
+      return localStorage.getItem('jig_active_agency') || 'jaydeep';
+    } catch (_e) {
+      return 'jaydeep';
+    }
+  });
+
+  const [agencySwitchModalOpen, setAgencySwitchModalOpen] = useState(false);
+  const [pendingSwitchAgency, setPendingSwitchAgency] = useState(null);
+
+  const openAgencySwitchModal = useCallback((targetAgencyId) => {
+    setPendingSwitchAgency(targetAgencyId || (currentAgency === 'jaydeep' ? 'aegis' : 'jaydeep'));
+    setAgencySwitchModalOpen(true);
+  }, [currentAgency]);
+
+  const closeAgencySwitchModal = useCallback(() => {
+    setAgencySwitchModalOpen(false);
+    setPendingSwitchAgency(null);
+  }, []);
+
+  const activeAgencyInfo = AGENCIES.find(a => a.id === currentAgency) || AGENCIES[0];
+  const allAgencies = AGENCIES;
+
   // Auth state — user & role management
   const [currentUser, setCurrentUser] = useState(() => {
     try {
@@ -27,7 +61,15 @@ export function AppProvider({ children }) {
 
   // Data states
   const [customers, setCustomers] = useState([]);
-  const [stock, setStock] = useState([]);
+  const [stock, setStock] = useState(() => {
+    try {
+      const activeAg = localStorage.getItem('jig_active_agency') || 'jaydeep';
+      const saved = localStorage.getItem(`jig_stock_cache_${activeAg}`) ||
+                    (activeAg === 'jaydeep' ? localStorage.getItem('jig_stock_cache') : null);
+      if (saved) return JSON.parse(saved);
+    } catch (_e) {}
+    return [];
+  });
   const stockRef = useRef(stock);
   useEffect(() => {
     stockRef.current = stock;
@@ -40,8 +82,12 @@ export function AppProvider({ children }) {
   const [marketPricesMeta, setMarketPricesMeta] = useState({ updatedAt: null, updatedBy: 'Admin' });
   const [agencySettings, setAgencySettings] = useState(() => {
     try {
-      const saved = localStorage.getItem('jig_agency_settings');
-      if (saved) return { ...DEFAULT_AGENCY_SETTINGS, ...JSON.parse(saved) };
+      const initialAgency = localStorage.getItem('jig_active_agency') || 'jaydeep';
+      const defaultProfile = DEFAULT_AGENCY_PROFILES[initialAgency] || DEFAULT_AGENCY_SETTINGS;
+      const saved = localStorage.getItem(`jig_agency_settings_${initialAgency}`) ||
+                    (initialAgency === 'jaydeep' ? localStorage.getItem('jig_agency_settings') : null);
+      if (saved) return { ...defaultProfile, ...JSON.parse(saved), agencyId: initialAgency };
+      return defaultProfile;
     } catch (_e) {}
     return DEFAULT_AGENCY_SETTINGS;
   });
@@ -108,14 +154,15 @@ export function AppProvider({ children }) {
     } catch (_e) {}
   }, [isLoggedIn]);
 
-  // Load all data from Supabase on mount (if logged in)
-  const loadAllData = useCallback(async () => {
+  // Load all data from Supabase for the specified or current agency
+  const loadAllData = useCallback(async (agencyId = currentAgency) => {
     if (!isLoggedIn) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    showLoading('Loading Jaydeep Indian Gas...', 'Connecting to database and fetching records');
+    const targetAgencyInfo = AGENCIES.find(a => a.id === agencyId) || AGENCIES[0];
+    showLoading(`Loading ${targetAgencyInfo.name}...`, 'Connecting to database and fetching agency records');
     setError(null);
     try {
       const [
@@ -129,14 +176,14 @@ export function AppProvider({ children }) {
         agencyData,
         usersData,
       ] = await Promise.all([
-        db.fetchCustomers().catch(err => { console.warn('Customers fetch fallback:', err); return []; }),
-        db.fetchStock().catch(err => { console.warn('Stock fetch fallback:', err); return []; }),
-        db.fetchInvoices().catch(err => { console.warn('Invoices fetch fallback:', err); return []; }),
-        db.fetchExpenses().catch(err => { console.warn('Expenses fetch fallback:', err); return []; }),
-        db.fetchRefillTrips().catch(err => { console.warn('Refill trips fetch fallback:', err); return []; }),
-        db.fetchNotes().catch(err => { console.warn('Notes fetch fallback:', err); return []; }),
-        db.fetchMarketPrices().catch(err => { console.warn('Market prices fetch fallback:', err); return null; }),
-        db.fetchAgencySettings().catch(err => { console.warn('Agency settings fetch fallback:', err); return null; }),
+        db.fetchCustomers(agencyId).catch(err => { console.warn('Customers fetch fallback:', err); return []; }),
+        db.fetchStock(agencyId).catch(err => { console.warn('Stock fetch fallback:', err); return []; }),
+        db.fetchInvoices(agencyId).catch(err => { console.warn('Invoices fetch fallback:', err); return []; }),
+        db.fetchExpenses(agencyId).catch(err => { console.warn('Expenses fetch fallback:', err); return []; }),
+        db.fetchRefillTrips(agencyId).catch(err => { console.warn('Refill trips fetch fallback:', err); return []; }),
+        db.fetchNotes(agencyId).catch(err => { console.warn('Notes fetch fallback:', err); return []; }),
+        db.fetchMarketPrices(agencyId).catch(err => { console.warn('Market prices fetch fallback:', err); return null; }),
+        db.fetchAgencySettings(agencyId).catch(err => { console.warn('Agency settings fetch fallback:', err); return null; }),
         db.fetchAppUsers().catch(err => { console.warn('App users fetch fallback:', err); return []; }),
       ]);
       setCustomers(customersData || []);
@@ -149,10 +196,17 @@ export function AppProvider({ children }) {
       if (marketData?.prices) {
         setMarketPrices(marketData.prices);
         setMarketPricesMeta(marketData.meta || { updatedAt: null, updatedBy: 'Admin' });
+      } else {
+        setMarketPrices(DEFAULT_MARKET_PRICES);
+        setMarketPricesMeta({ updatedAt: null, updatedBy: 'Admin' });
       }
       if (agencyData?.settings) {
         setAgencySettings(agencyData.settings);
         setAgencySettingsMeta({ syncedWithSupabase: agencyData.syncedWithSupabase });
+      } else {
+        const def = DEFAULT_AGENCY_PROFILES[agencyId] || DEFAULT_AGENCY_SETTINGS;
+        setAgencySettings(def);
+        setAgencySettingsMeta({ syncedWithSupabase: false });
       }
       setAppUsers(usersData || []);
     } catch (err) {
@@ -162,7 +216,39 @@ export function AppProvider({ children }) {
       setLoading(false);
       hideLoading();
     }
-  }, [isLoggedIn, showLoading, hideLoading]);
+  }, [isLoggedIn, currentAgency, showLoading, hideLoading]);
+
+  // Secure Agency Profile Switch Protected by Password '2323'
+  const switchAgency = async (targetAgencyId, enteredPassword) => {
+    if (enteredPassword !== AGENCY_SWITCH_PASSWORD) {
+      throw new Error('Incorrect security password! Please enter the authorized PIN.');
+    }
+    if (targetAgencyId === currentAgency) return true;
+
+    const targetInfo = AGENCIES.find(a => a.id === targetAgencyId) || AGENCIES[0];
+    showLoading(`Switching to ${targetInfo.name}...`, 'Security authorized · Loading agency data');
+    try {
+      localStorage.setItem('jig_active_agency', targetAgencyId);
+      setCurrentAgency(targetAgencyId);
+      // Immediately preload target agency stock into state and ref to eliminate mismatch
+      try {
+        const targetSaved = localStorage.getItem(`jig_stock_cache_${targetAgencyId}`) ||
+                            (targetAgencyId === 'jaydeep' ? localStorage.getItem('jig_stock_cache') : null);
+        if (targetSaved) {
+          const parsed = JSON.parse(targetSaved);
+          setStock(parsed);
+          stockRef.current = parsed;
+        } else {
+          setStock([]);
+          stockRef.current = [];
+        }
+      } catch (_e) {}
+      await loadAllData(targetAgencyId);
+      return true;
+    } finally {
+      hideLoading();
+    }
+  };
 
   useEffect(() => {
     loadAllData();
@@ -268,8 +354,9 @@ export function AppProvider({ children }) {
       try {
         const newCust = await db.insertCustomer({
           ...customer,
+          agencyId: currentAgency,
           bottleBalance: customer.bottleBalance || defaultBottleBalance(),
-        });
+        }, currentAgency);
         setCustomers(prev => [...prev, newCust]);
         return newCust;
       } catch (err) {
@@ -404,7 +491,7 @@ export function AppProvider({ children }) {
       setStock(updatedList);
 
       try {
-        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty }, currentAgency);
       } catch (err) {
         console.error('Failed to update stock:', err);
       }
@@ -450,7 +537,7 @@ export function AppProvider({ children }) {
 
     for (const [cylType, counts] of Object.entries(updatedStockEntries)) {
       try {
-        await db.patchStock(cylType, counts);
+        await db.patchStock(cylType, counts, currentAgency);
       } catch (err) {
         console.error(`Failed to patch stock for ${cylType}:`, err);
       }
@@ -479,7 +566,7 @@ export function AppProvider({ children }) {
       setStock(updatedList);
 
       try {
-        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty }, currentAgency);
       } catch (err) {
         console.error('Failed to add stock:', err);
       }
@@ -511,7 +598,7 @@ export function AppProvider({ children }) {
       setStock(updatedList);
 
       try {
-        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty });
+        await db.patchStock(cylinderType, { filledCount: newFilled, emptyCount: newEmpty }, currentAgency);
       } catch (err) {
         console.error('Failed to set stock direct:', err);
       }
@@ -521,7 +608,7 @@ export function AppProvider({ children }) {
   const refreshStock = async (silent = false) => {
     const doFetch = async () => {
       try {
-        const fresh = await db.fetchStock();
+        const fresh = await db.fetchStock(currentAgency);
         const freshList = fresh || [];
         stockRef.current = freshList;
         setStock(freshList);
@@ -589,13 +676,16 @@ export function AppProvider({ children }) {
     return withLoading(async () => {
       try {
         const isEB = invoiceData.invoiceType === 'Empty Bottle';
-        const defaultPrefix = isEB ? 'EB' : 'JIG';
+        const defaultPrefix = isEB 
+          ? (agencySettings?.emptyBottlePrefix || (currentAgency === 'aegis' ? 'AEB' : 'EB')) 
+          : (agencySettings?.invoicePrefix || (currentAgency === 'aegis' ? 'AGA' : 'JIG'));
         const invoiceNumber = invoiceData.invoiceNumber || `${defaultPrefix}-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`;
         
         const newInvoice = await db.insertInvoice({
           ...invoiceData,
           invoiceNumber,
-        });
+          agencyId: currentAgency,
+        }, currentAgency);
 
         setInvoices(prev => [...prev, newInvoice]);
 
@@ -920,7 +1010,10 @@ export function AppProvider({ children }) {
   const addExpense = async (expenseData) => {
     return withLoading(async () => {
       try {
-        const newExpense = await db.insertExpense(expenseData);
+        const newExpense = await db.insertExpense({
+          ...expenseData,
+          agencyId: currentAgency,
+        }, currentAgency);
         setExpenses(prev => [...prev, newExpense]);
         return newExpense;
       } catch (err) {
@@ -961,7 +1054,8 @@ export function AppProvider({ children }) {
         const newTrip = await db.insertRefillTrip({
           cylinderType,
           emptySentCount: Number(emptyCount),
-        });
+          agencyId: currentAgency,
+        }, currentAgency);
         setRefillTrips(prev => [newTrip, ...prev]);
         return newTrip;
       } catch (err) {
@@ -1054,7 +1148,10 @@ export function AppProvider({ children }) {
   const addNote = async (noteData) => {
     return withLoading(async () => {
       try {
-        const newNote = await db.insertNote(noteData);
+        const newNote = await db.insertNote({
+          ...noteData,
+          agencyId: currentAgency,
+        }, currentAgency);
         setNotes(prev => [newNote, ...prev]);
         return newNote;
       } catch (err) {
@@ -1099,7 +1196,7 @@ export function AppProvider({ children }) {
     }
     return withLoading(async () => {
       try {
-        await db.resetAllData();
+        await db.resetAllData(currentAgency);
         // Clear all local state
         setCustomers([]);
         setInvoices([]);
@@ -1112,7 +1209,7 @@ export function AppProvider({ children }) {
         console.error('Failed to reset data:', err);
         throw err;
       }
-    }, 'Resetting All Data...', 'Clearing database records to initial state');
+    }, 'Resetting Agency Data...', `Clearing database records for ${activeAgencyInfo.name} to initial state`);
   };
 
   // ==================== MARKET PRICES & DISCOUNTS ====================
@@ -1121,7 +1218,7 @@ export function AppProvider({ children }) {
     return withLoading(async () => {
       try {
         const oldMarketPrices = { ...marketPrices };
-        const saved = await db.saveMarketPrices(newPrices);
+        const saved = await db.saveMarketPrices(newPrices, currentAgency);
         setMarketPrices(saved.prices);
         setMarketPricesMeta(saved.meta);
 
@@ -1164,7 +1261,7 @@ export function AppProvider({ children }) {
   const updateAgencySettings = async (newSettings) => {
     return withLoading(async () => {
       try {
-        const res = await db.saveAgencySettings(newSettings, currentUser?.name || 'Admin');
+        const res = await db.saveAgencySettings(newSettings, currentUser?.name || 'Admin', currentAgency);
         setAgencySettings(res.settings);
         setAgencySettingsMeta({
           syncedWithSupabase: res.syncedWithSupabase,
@@ -1182,7 +1279,8 @@ export function AppProvider({ children }) {
   const resetAgencySettings = async () => {
     return withLoading(async () => {
       try {
-        const res = await db.saveAgencySettings(DEFAULT_AGENCY_SETTINGS, currentUser?.name || 'Admin');
+        const defaultProfile = DEFAULT_AGENCY_PROFILES[currentAgency] || DEFAULT_AGENCY_SETTINGS;
+        const res = await db.saveAgencySettings(defaultProfile, currentUser?.name || 'Admin', currentAgency);
         setAgencySettings(res.settings);
         setAgencySettingsMeta({
           syncedWithSupabase: res.syncedWithSupabase,
@@ -1201,6 +1299,11 @@ export function AppProvider({ children }) {
 
   return (
     <AppContext.Provider value={{
+      // Agency Profile & Switching (Password '2323' protected)
+      currentAgency, switchAgency, activeAgencyInfo, allAgencies,
+      agencySwitchModalOpen, setAgencySwitchModalOpen,
+      pendingSwitchAgency, setPendingSwitchAgency,
+      openAgencySwitchModal, closeAgencySwitchModal,
       isLoggedIn, login, logout,
       currentUser, appUsers, createAppUser, updateAppUser, deleteAppUser,
       hasModuleAccess, canEditModule,
